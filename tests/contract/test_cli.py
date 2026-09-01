@@ -52,7 +52,7 @@ def test_command_groups_without_subcommand_show_help(
 
 def test_version_is_available(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--version"]) == 0
-    assert capsys.readouterr().out.strip() == "0.1.2"
+    assert capsys.readouterr().out.strip() == "0.1.3"
 
 
 def test_unknown_flags_and_values_are_structured(

@@ -18,7 +18,6 @@ description: >-
   skill lineage, reconcile global Agent Skills, and initialize agent-ready
   projects. Use for environment or bootstrap work; defer ordinary project
   implementation to that project's own workflow.
-user-invocable: false
 metadata:
   short-description: Operate the curated agent environment
 ---
