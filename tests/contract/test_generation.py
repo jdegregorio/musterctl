@@ -24,6 +24,15 @@ def test_generator_detects_and_repairs_drift(tmp_path: Path) -> None:
     assert build(True, tmp_path, path) == 1
 
 
+def test_skill_only_generation_does_not_require_repository_docs(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "standalone" / "SKILL.md"
+    assert build(False, tmp_path, output, include_docs=False) == 0
+    assert not (tmp_path / "docs" / "commands.md").exists()
+    assert build(True, tmp_path, output, include_docs=False) == 0
+
+
 def test_generated_skill_defers_to_live_cli_and_includes_policy() -> None:
     skill = render_skill()
     assert "musterctl <command> --help" in skill
@@ -48,6 +57,12 @@ def test_generator_cli_can_print_and_write_standalone_skill(
     captured = capsys.readouterr()
     assert "name: musterctl" in captured.out
     output = tmp_path / "SKILL.md"
-    assert main(["--skill-output", str(output)]) == 0
+    assert main(["--skill-only", "--skill-output", str(output)]) == 0
     assert output.read_text(encoding="utf-8") == render_skill()
-    assert main(["--check", "--skill-output", str(output)]) == 0
+    assert main(["--check", "--skill-only", "--skill-output", str(output)]) == 0
+
+
+def test_skill_only_requires_an_output() -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["--skill-only"])
+    assert error.value.code == 2

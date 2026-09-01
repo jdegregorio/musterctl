@@ -96,12 +96,17 @@ def build(
     check: bool,
     root: Path | None = None,
     skill_output: Path | None = None,
+    include_docs: bool = True,
 ) -> int:
-    drift = [
-        path
-        for path, content in generated_files(root).items()
-        if _write_or_check(path, content, check)
-    ]
+    drift = (
+        [
+            path
+            for path, content in generated_files(root).items()
+            if _write_or_check(path, content, check)
+        ]
+        if include_docs
+        else []
+    )
     if skill_output is not None and _write_or_check(
         skill_output, render_skill(), check
     ):
@@ -125,6 +130,11 @@ def main(argv: list[str] | None = None) -> int:
         help="also write or check standalone musterctl SKILL.md guidance",
     )
     parser.add_argument(
+        "--skill-only",
+        action="store_true",
+        help="skip repository docs; requires --skill-output",
+    )
+    parser.add_argument(
         "--print-skill",
         action="store_true",
         help="print standalone musterctl skill guidance to stdout",
@@ -133,7 +143,13 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.print_skill:
         sys.stdout.write(render_skill())
         return 0
-    return build(arguments.check, skill_output=arguments.skill_output)
+    if arguments.skill_only and arguments.skill_output is None:
+        parser.error("--skill-only requires --skill-output")
+    return build(
+        arguments.check,
+        skill_output=arguments.skill_output,
+        include_docs=not arguments.skill_only,
+    )
 
 
 if __name__ == "__main__":
