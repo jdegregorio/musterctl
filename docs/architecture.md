@@ -45,9 +45,27 @@ versioned environment install the Nix flake.
 
 `setup inspect` works before any catalog exists. It reads Skills CLI v3 lineage
 from `~/.agents/.skill-lock.json`, scans canonical and harness-specific global
-roots, deduplicates adapters, and labels installs `tracked` or `untracked`.
-`setup init` accepts explicit selections, writes an external starter catalog
-atomically, never overwrites, and never changes installed skill content.
+roots, and discovers skill-bearing projects under bounded roots (by default
+`~/Repos`). It reports hashes, lineage, catalog comparison, adapter count, and
+conflicting same-name variants. `setup init` accepts exact tracked selections,
+writes an external starter catalog atomically, never overwrites, and never
+changes installed skill content. Installs without verifiable source remain
+visible but unmanaged.
+
+## Catalog lifecycle
+
+The external catalog is an ordinary version-controlled TOML document, not
+package state. Add and adoption apply resolve the configured Git ref and verify
+`SKILL.md` before recording a commit and digest. Configuration changes global
+membership/scopes; removal cleans policy references but preserves installed
+content. Every plan validates an in-memory prospective catalog without fetching
+or writing. Apply holds an exclusive cross-process lock across compare-and-swap
+and atomic replacement, so overlapping musterctl writers cannot lose an edit.
+
+When Home Manager publishes a generated runtime target, mutations point
+`MUSTERCTL_CATALOG` or `--catalog` at the authoritative working-tree source. The
+CLI does not edit a Nix store target or activate a developer-environment
+generation.
 
 ## Global reconciliation
 
@@ -57,12 +75,30 @@ invokes nothing. Apply fetches the configured Git revision into an isolated
 checkout, rejects symlinks, verifies the complete source digest, and only then
 runs the pinned `skills@1.5.23` CLI noninteractively against
 `<verified-source>`. It closes stdin, disables telemetry/color, runs only
-missing or drifted profile entries, and re-inspects. Unmanaged skills are
-visible but are never removed.
+missing or outdated profile entries, and re-inspects. Unmanaged skills are
+visible and sync never removes them.
+
+Successful reconciliation records installed catalog snapshots in
+`$XDG_STATE_HOME/musterctl/global-lock.json` (or the equivalent home-local state
+path). This machine-local, non-policy lock distinguishes a legitimate catalog
+advance from edits made directly to deployed copies. Local edits block the
+entire apply unless `--replace-drift` is explicit. `skills prune` is a separate
+operation: it requires an explicit apply selection, protects catalog-managed
+names, and is bounded to canonical global names and their adapters.
 
 Third-party sources require a full commit in their installer selector plus a
 SHA-256 content digest. Personal sources may use an explicit latest policy, but
 the configured digest still makes drift visible.
+
+## Source-first evolution
+
+An installed global or project skill is a deployment. `skills source` exposes
+repository, path, editable ref, immutable pin, and digest. `skills checkout`
+creates a no-replace checkout and verifies the editable ref still has the
+catalog's content before publishing it. The agent edits, tests, commits, and
+pushes in that repository, then `catalog update` resolves and records the new
+snapshot. Global and cross-project rollout are deliberately separate,
+reviewable actions.
 
 ## Project transaction
 
@@ -78,6 +114,27 @@ transaction initializes Git, runs the
 template's `scripts/check`, and atomically publishes with no-replace semantics.
 Failure or interruption removes the temporary tree; an existing or concurrently
 appearing destination is never overwritten.
+
+A template may include `.musterctl/project.toml` (or another configured relative
+path) containing required and recommended skill names. The external catalog
+keeps a snapshot of those lists so `init --plan` remains fetch-free. Apply
+verifies the pinned template's manifest before installing required skills and
+any explicit/default selections. The generated lock retains full source lineage
+and adapter paths.
+
+## Existing project reconciliation
+
+`projects status` discovers locks and canonical skill roots under bounded search
+roots. It compares installed content, adapter content, the project's prior lock,
+and the current catalog. This separates an available update from local edits.
+
+`projects sync --plan` considers only entries already managed by each project's
+lock. Apply preflights every selected action, so one drift or policy conflict
+blocks all work. It never removes project content. For each project, source is
+staged and verified, canonical plus known adapter copies and lock metadata are
+replaced, and `scripts/check` runs. A failure restores that project's
+directories and lock; success in one project is not coupled transactionally to
+another repository.
 
 ## Recovery model
 

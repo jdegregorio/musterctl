@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-PRODUCT_DESCRIPTION = "Agent-native control plane for external skill catalogs."
+PRODUCT_DESCRIPTION = (
+    "Agent-native control plane for source-backed skill catalogs and projects."
+)
 
 POLICIES = (
     "The local catalog is versioned workstation policy, not package state.",
@@ -13,6 +15,9 @@ POLICIES = (
     "Pinned skills use explicit source revisions and content digests.",
     "Project skills are copied into the repository and recorded in skills-lock.json.",
     "Global skills must not be duplicated into projects.",
+    "Installed-copy edits are drift: move intentional changes to source first.",
+    "Catalog updates never silently rewrite global or project installations.",
+    "Project reconciliation never removes a project skill.",
     "Use --plan or --dry-run before meaningful mutations.",
     "Complete mutation requests never prompt for confirmation.",
 )
@@ -61,6 +66,48 @@ COMMANDS = (
         ("musterctl catalog show gh-axi",),
     ),
     CommandSpec(
+        ("catalog", "add"),
+        "Plan or add one verified Git-backed skill to the external catalog.",
+        True,
+        "use --plan first; apply resolves the ref and writes one catalog file",
+        ("musterctl catalog add helper --source owner/helper --plan",),
+    ),
+    CommandSpec(
+        ("catalog", "adopt"),
+        "Plan or adopt a discovered installation with verifiable source lineage.",
+        True,
+        "no-source and source-mismatched installs are blocked",
+        ("musterctl catalog adopt ~/.agents/skills/helper --plan",),
+    ),
+    CommandSpec(
+        ("catalog", "remove"),
+        "Plan or remove catalog policy while preserving every installed copy.",
+        True,
+        "installed global and project content is never removed",
+        ("musterctl catalog remove helper --plan",),
+    ),
+    CommandSpec(
+        ("catalog", "configure"),
+        "Plan or change one skill's allowed scopes and global-profile membership.",
+        True,
+        "configuration changes do not immediately alter installations",
+        ("musterctl catalog configure helper --no-global --scope project --plan",),
+    ),
+    CommandSpec(
+        ("catalog", "check-updates"),
+        "Resolve source refs and report catalog snapshots that can advance.",
+        False,
+        "read-only network operation",
+        ("musterctl catalog check-updates",),
+    ),
+    CommandSpec(
+        ("catalog", "update"),
+        "Plan or advance one catalog pin and digest from its verified source ref.",
+        True,
+        "does not rewrite installed global or project copies",
+        ("musterctl catalog update helper --plan",),
+    ),
+    CommandSpec(
         ("templates", "list"),
         "List available project templates.",
         False,
@@ -104,15 +151,50 @@ COMMANDS = (
         ("musterctl skills diff musterctl",),
     ),
     CommandSpec(
+        ("skills", "source"),
+        "Show exact source lineage and the source-first improvement workflow.",
+        False,
+        "read-only",
+        ("musterctl skills source musterctl",),
+    ),
+    CommandSpec(
+        ("skills", "checkout"),
+        "Plan or create an editable checkout of a skill's configured source.",
+        True,
+        "never replaces a path and rejects source refs ahead of catalog content",
+        ("musterctl skills checkout musterctl --plan",),
+    ),
+    CommandSpec(
+        ("skills", "prune"),
+        "Plan or remove explicitly selected unmanaged global skill copies.",
+        True,
+        "managed global and all project skills are protected",
+        ("musterctl skills prune --plan",),
+    ),
+    CommandSpec(
+        ("projects", "status"),
+        "Discover managed project skills and compare copies, locks, and catalog.",
+        False,
+        "read-only; defaults to configured roots or ~/Repos",
+        ("musterctl projects status",),
+    ),
+    CommandSpec(
+        ("projects", "sync"),
+        "Plan or transactionally advance managed skill copies across projects.",
+        True,
+        "never removes skills; local changes block apply by default",
+        ("musterctl projects sync --plan",),
+    ),
+    CommandSpec(
         ("setup", "inspect"),
-        "Inspect existing global skills and their Skills CLI source lineage.",
+        "Discover global and project installs, lineage, hashes, and conflicts.",
         False,
         "read-only; works before a catalog exists",
         ("musterctl setup inspect",),
     ),
     CommandSpec(
         ("setup", "init"),
-        "Plan or create an external catalog from selected tracked installs.",
+        "Plan or create an external catalog from selected source-tracked installs.",
         True,
         "use --plan first; existing catalogs are never overwritten",
         (

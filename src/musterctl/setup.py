@@ -29,6 +29,10 @@ class InstalledSkill:
     installer_hash: str | None
     content_sha256: str | None
     description: str
+    scope: str = "global"
+    project: Path | None = None
+    source_pin: str | None = None
+    source_ref: str = "HEAD"
 
 
 def _read_skills_lock(home: Path) -> dict[str, object]:
@@ -156,16 +160,20 @@ def select_installed_skills(
     candidates: list[InstalledSkill],
     includes: list[str],
     all_tracked: bool,
+    include_paths: list[Path] | None = None,
 ) -> list[InstalledSkill]:
-    by_name = {candidate.name: candidate for candidate in candidates}
-    names = [
-        candidate.name
+    by_name: dict[str, list[InstalledSkill]] = {}
+    by_path: dict[Path, InstalledSkill] = {}
+    for candidate in candidates:
+        by_name.setdefault(candidate.name, []).append(candidate)
+        if candidate.path is not None:
+            by_path[candidate.path.resolve()] = candidate
+    selected: list[InstalledSkill] = [
+        candidate
         for candidate in candidates
-        if all_tracked and candidate.lineage == "tracked"
+        if all_tracked and candidate.lineage == "tracked" and candidate.path is not None
     ]
-    names.extend(includes)
-    names = list(dict.fromkeys(names))
-    unknown = [name for name in names if name not in by_name]
+    unknown = [name for name in includes if name not in by_name]
     if unknown:
         raise MusterctlError(
             "unknown_installed_skill",
@@ -173,13 +181,56 @@ def select_installed_skills(
             fields={"skills": ",".join(unknown)},
             next_actions=("musterctl setup inspect",),
         )
-    if len(names) > 5:
+    ambiguous = [name for name in includes if len(by_name[name]) > 1]
+    if ambiguous:
         raise MusterctlError(
-            "catalog_too_large",
-            "The initial catalog is limited to five skills.",
-            fields={"count": len(names)},
+            "installed_skill_ambiguous",
+            "A selected name has multiple installed variants.",
+            EXIT_CONFLICT,
+            {"skills": ",".join(ambiguous)},
+            ("select the exact installation with --include-path",),
         )
-    selected = [by_name[name] for name in names]
+    selected.extend(by_name[name][0] for name in includes)
+    for raw_path in include_paths or []:
+        path = raw_path.expanduser().resolve()
+        try:
+            selected.append(by_path[path])
+        except KeyError as exc:
+            raise MusterctlError(
+                "unknown_installed_path",
+                "A requested installed skill path was not found.",
+                fields={"path": path},
+                next_actions=("musterctl setup inspect",),
+            ) from exc
+    selected = list(dict.fromkeys(selected))
+    conflicting_names = [
+        name
+        for name in {candidate.name for candidate in selected}
+        if len(
+            {
+                candidate.content_sha256
+                for candidate in selected
+                if candidate.name == name
+            }
+        )
+        > 1
+    ]
+    if conflicting_names:
+        raise MusterctlError(
+            "catalog_name_conflict",
+            "The selected installations use the same name for different content.",
+            EXIT_CONFLICT,
+            {"skills": ",".join(sorted(conflicting_names))},
+            ("keep one variant or rename and source them independently",),
+        )
+    deduplicated: dict[str, InstalledSkill] = {}
+    for candidate in selected:
+        current = deduplicated.get(candidate.name)
+        if current is None or (
+            current.scope != "global" and candidate.scope == "global"
+        ):
+            deduplicated[candidate.name] = candidate
+    selected = list(deduplicated.values())
     unusable = [
         item.name
         for item in selected
@@ -196,7 +247,10 @@ def select_installed_skills(
             "Only installed skills with Skills CLI source lineage can be imported.",
             EXIT_CONFLICT,
             {"skills": ",".join(unusable)},
-            ("keep untracked skills unmanaged or add their source metadata manually",),
+            (
+                "keep no-source skills unmanaged for now",
+                "use gh-axi to create a dedicated source repository, then add it",
+            ),
         )
     return selected
 
@@ -210,12 +264,13 @@ def _toml_array(values: list[str]) -> str:
 
 
 def render_initial_catalog(skills: list[InstalledSkill]) -> str:
+    global_names = [skill.name for skill in skills if skill.scope == "global"]
     lines = [
         "version = 1",
         "",
         "[profiles.global]",
         'agents = ["codex", "claude-code"]',
-        f"skills = {_toml_array([skill.name for skill in skills])}",
+        f"skills = {_toml_array(global_names)}",
     ]
     for skill in skills:
         assert skill.source is not None
@@ -229,19 +284,73 @@ def render_initial_catalog(skills: list[InstalledSkill]) -> str:
                 f"description = {_toml_string(skill.description)}",
                 'category = "Imported"',
                 'ownership = "imported"',
-                'update_policy = "latest"',
+                (
+                    'update_policy = "pinned"'
+                    if skill.source_pin
+                    else 'update_policy = "latest"'
+                ),
                 f"source = {_toml_string(skill.source)}",
                 f"source_url = {_toml_string(skill.source_url)}",
                 f"source_path = {_toml_string(skill.source_path)}",
                 f"source_skill = {_toml_string(skill.source_skill)}",
+                f"source_ref = {_toml_string(skill.source_ref)}",
+                *(
+                    (f"pin = {_toml_string(skill.source_pin)}",)
+                    if skill.source_pin
+                    else ()
+                ),
                 f"content_sha256 = {_toml_string(skill.content_sha256)}",
-                'scope = ["global"]',
+                f"scope = {_toml_array([skill.scope])}",
             )
         )
     lines.extend(("", "[template_layers]", "", "[templates]", ""))
     rendered = "\n".join(lines)
     tomllib.loads(rendered)
     return rendered
+
+
+def inspect_device_skills(
+    *,
+    catalog: object | None = None,
+    search_roots: tuple[Path, ...] = (),
+    projects: tuple[Path, ...] = (),
+    home: Path | None = None,
+) -> list[InstalledSkill]:
+    """Return setup candidates from global and project inventory."""
+
+    from musterctl.catalog import Catalog
+    from musterctl.inventory import inventory
+
+    selected_catalog = catalog if isinstance(catalog, Catalog) else None
+    installations = inventory(
+        selected_catalog,
+        search_roots=search_roots,
+        projects=projects,
+        home=home,
+    )
+    candidates = [
+        InstalledSkill(
+            name=installation.name,
+            path=installation.paths[0] if installation.paths else None,
+            lineage=installation.lineage,
+            source=installation.source,
+            source_url=installation.source_url,
+            source_path=installation.source_path,
+            source_skill=installation.source_skill,
+            installer_hash=None,
+            content_sha256=installation.content_sha256,
+            description=_description(
+                installation.paths[0] if installation.paths else None,
+                installation.name,
+            ),
+            scope=installation.scope,
+            project=installation.project,
+            source_pin=installation.source_pin,
+            source_ref=installation.source_ref,
+        )
+        for installation in installations
+    ]
+    return candidates
 
 
 def write_initial_catalog(

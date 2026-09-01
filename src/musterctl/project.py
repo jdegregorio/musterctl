@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,10 @@ _PROJECT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
 _RENAME_EXCL = 4
+_AGENT_SKILL_ROOTS = {
+    "claude-code": ".claude/skills",
+    "codex": ".codex/skills",
+}
 
 
 def _publish_noreplace(source: Path, destination: Path) -> None:
@@ -125,7 +130,7 @@ class ProjectInitializer:
                 ("choose another project name", "inspect the existing destination"),
             )
         template = self.catalog.template(template_name)
-        names: list[str] = []
+        names: list[str] = list(template.required_skills)
         if use_defaults:
             names.extend(template.recommended_skills)
         names.extend(requested_skills)
@@ -192,6 +197,7 @@ class ProjectInitializer:
                     configured.content_sha256,
                     temporary,
                 )
+            self._validate_skill_manifest(temporary, plan.template)
             tokens = {
                 "{{PROJECT_NAME}}": plan.name,
                 "{{PROJECT_MODULE}}": plan.module_name,
@@ -286,15 +292,53 @@ class ProjectInitializer:
                         "actual": actual_hash,
                     },
                 )
+            for agent in self.catalog.global_profile.agents:
+                adapter_root = _AGENT_SKILL_ROOTS.get(agent)
+                if adapter_root is None:
+                    continue
+                adapter = root / adapter_root / skill.name
+                if not adapter.is_dir() or not (adapter / "SKILL.md").is_file():
+                    raise MusterctlError(
+                        "project_skill_adapter_missing",
+                        "The Skills CLI did not materialize a required project "
+                        "adapter.",
+                        EXIT_ENVIRONMENT,
+                        {"agent": agent, "skill": skill.name, "path": adapter},
+                    )
+                try:
+                    resolved_adapter = adapter.resolve()
+                    resolved_adapter.relative_to(root.resolve())
+                except ValueError as exc:
+                    raise MusterctlError(
+                        "project_skill_adapter_invalid",
+                        "A project skill adapter escapes the project transaction.",
+                        EXIT_ENVIRONMENT,
+                        {"agent": agent, "skill": skill.name, "path": adapter},
+                    ) from exc
+                if hash_tree(resolved_adapter) != actual_hash:
+                    raise MusterctlError(
+                        "project_skill_adapter_mismatch",
+                        "A project skill adapter differs from its canonical copy.",
+                        EXIT_ENVIRONMENT,
+                        {"agent": agent, "skill": skill.name, "path": adapter},
+                    )
 
     def _write_lock(self, root: Path, plan: ProjectPlan) -> None:
         entries = {
             skill.name: {
+                "adapters": [
+                    f"{_AGENT_SKILL_ROOTS[agent]}/{skill.name}"
+                    for agent in self.catalog.global_profile.agents
+                    if agent in _AGENT_SKILL_ROOTS
+                ],
                 "content_sha256": hash_tree(root / ".agents" / "skills" / skill.name),
                 "ownership": skill.ownership,
                 "path": f".agents/skills/{skill.name}",
                 "source": skill.source,
                 "source_pin": skill.pin,
+                "source_url": skill.source_url,
+                "source_path": skill.source_path,
+                "source_ref": skill.source_ref,
                 "source_skill": skill.source_skill,
                 "update_policy": skill.update_policy,
             }
@@ -309,6 +353,51 @@ class ProjectInitializer:
         (root / "skills-lock.json").write_text(
             json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+
+    @staticmethod
+    def _validate_skill_manifest(root: Path, template: TemplateSpec) -> None:
+        if template.skill_manifest is None:
+            return
+        path = root / template.skill_manifest
+        try:
+            raw = tomllib.loads(path.read_text(encoding="utf-8"))
+            skills = raw["skills"]
+            if not isinstance(skills, dict):
+                raise TypeError("skills must be a table")
+            raw_required = skills.get("required", [])
+            raw_recommended = skills.get("recommended", [])
+            if not isinstance(raw_required, list) or not all(
+                isinstance(name, str) for name in raw_required
+            ):
+                raise TypeError("skills.required must be a string array")
+            if not isinstance(raw_recommended, list) or not all(
+                isinstance(name, str) for name in raw_recommended
+            ):
+                raise TypeError("skills.recommended must be a string array")
+            required = tuple(raw_required)
+            recommended = tuple(raw_recommended)
+        except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+            raise MusterctlError(
+                "template_skill_manifest_invalid",
+                f"The template skill manifest is missing or invalid: {exc}",
+                EXIT_ENVIRONMENT,
+                {"path": path, "template": template.name},
+                ("repair the pinned template source and catalog snapshot",),
+            ) from exc
+        if (
+            required != template.required_skills
+            or recommended != template.recommended_skills
+        ):
+            raise MusterctlError(
+                "template_skill_manifest_drift",
+                "The pinned template's skill manifest differs from the catalog index.",
+                EXIT_ENVIRONMENT,
+                {
+                    "template": template.name,
+                    "manifest": path,
+                },
+                ("update the catalog template skill snapshot",),
+            )
 
     @staticmethod
     def _run(command: tuple[str, ...], cwd: Path, error_code: str) -> None:

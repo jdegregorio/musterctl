@@ -16,6 +16,7 @@ from musterctl.handlers import (
     skills_available,
     skills_diff,
     status,
+    templates_list,
     templates_show,
 )
 
@@ -43,6 +44,9 @@ def test_read_handlers_expose_context_and_next_actions(
     assert "skills[1]" in catalog_search(catalog, "github").render()
     shown = catalog_show(catalog, "gh-axi").render()
     assert "source_url:" in shown and "pin:" in shown
+    project_shown = catalog_show(catalog, "project-helper").render()
+    assert "musterctl skills available" in project_shown
+    assert "templates[2]" in templates_list(catalog).render()
     assert "recommended_skills[0]" in templates_show(catalog, "base").render()
     assert "available[1]" in skills_available(catalog, None).render()
 
@@ -63,6 +67,9 @@ def test_unmanaged_global_skill_is_visible_without_sync_attention(
     assert "health: ok" in rendered
     assert "local-helper,unmanaged,unknown" in rendered
     assert "musterctl skills sync --dry-run" not in rendered
+    ambient = dashboard(catalog).render()
+    assert "next[1]" in ambient
+    assert "musterctl templates list" in ambient
 
 
 def test_skills_diff_prefers_project_installation(
@@ -123,13 +130,17 @@ def test_setup_handlers_work_before_catalog_exists(
         encoding="utf-8",
     )
     inspected = setup_inspect().render()
-    assert "tracked,tracked,owner/repo,skills/tracked,true" in inspected
+    assert (
+        "tracked,global,tracked,ready,not_in_catalog,owner/repo,skills/tracked"
+        in inspected
+    )
+    assert "name_conflicts[0]" in inspected
     destination = tmp_path / "bootstrap" / "catalog.toml"
-    planned = setup_init(["tracked"], False, destination, True).render()
+    planned = setup_init(["tracked"], [], False, destination, True).render()
     assert "mode: plan" in planned
     assert "mutations: 0" in planned
     assert not destination.exists()
-    applied = setup_init(["tracked"], False, destination, False).render()
+    applied = setup_init(["tracked"], [], False, destination, False).render()
     assert "mode: apply" in applied
     assert "mutations: 1" in applied
     assert destination.is_file()

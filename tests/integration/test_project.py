@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,35 @@ def test_plan_is_non_mutating_and_defaults_are_explicit(
     assert "install 1 project skills" in plan.actions
 
 
+def test_template_required_skills_are_automatic_and_manifest_is_verified(
+    project_catalog: Catalog, tmp_path: Path
+) -> None:
+    template = project_catalog.template("python-cli")
+    configured = replace(
+        template,
+        required_skills=("project-helper",),
+        recommended_skills=(),
+        skill_manifest=".musterctl/project.toml",
+    )
+    project_catalog.templates[template.name] = configured
+    plan = ProjectInitializer(project_catalog).plan(
+        "required", "python-cli", [], False, tmp_path
+    )
+    assert [skill.name for skill in plan.skills] == ["project-helper"]
+    materialized = tmp_path / "materialized"
+    manifest = materialized / ".musterctl" / "project.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        '[skills]\nrequired = ["project-helper"]\nrecommended = []\n',
+        encoding="utf-8",
+    )
+    ProjectInitializer._validate_skill_manifest(materialized, configured)
+    manifest.write_text("[skills]\nrequired = []\nrecommended = []\n", encoding="utf-8")
+    with pytest.raises(MusterctlError) as error:
+        ProjectInitializer._validate_skill_manifest(materialized, configured)
+    assert error.value.code == "template_skill_manifest_drift"
+
+
 def test_plan_rejects_conflicts(catalog: Catalog, tmp_path: Path) -> None:
     initializer = ProjectInitializer(catalog)
     with pytest.raises(MusterctlError) as parent_error:
@@ -57,9 +87,12 @@ def _fake_skill_install(catalog: Catalog, command: tuple[str, ...], cwd: Path) -
         canonical,
         ignore=shutil.ignore_patterns(".git"),
     )
-    adapter = cwd / ".claude" / "skills" / name
-    adapter.parent.mkdir(parents=True)
-    adapter.symlink_to(Path("../../.agents/skills") / name, target_is_directory=True)
+    for root in (".claude", ".codex"):
+        adapter = cwd / root / "skills" / name
+        adapter.parent.mkdir(parents=True)
+        adapter.symlink_to(
+            Path("../../.agents/skills") / name, target_is_directory=True
+        )
 
 
 def test_python_project_journey_materializes_valid_repo_and_skill(
@@ -117,6 +150,37 @@ def test_failed_validation_cleans_temporary_tree(
     assert error.value.code == "project_validation_failed"
     assert not plan.destination.exists()
     assert not list(tmp_path.glob(".broken.musterctl-*"))
+
+
+def test_missing_project_skill_adapter_aborts_initialization(
+    project_catalog: Catalog,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def canonical_only(
+        command: tuple[str, ...], cwd: Path | None = None, home: Path | None = None
+    ) -> None:
+        assert cwd is not None and home is None
+        name = command[command.index("--skill") + 1]
+        target = cwd / ".agents" / "skills" / name
+        target.parent.mkdir(parents=True)
+        shutil.copytree(
+            Path(project_catalog.skill(name).source_url),
+            target,
+            ignore=shutil.ignore_patterns(".git"),
+        )
+
+    monkeypatch.setattr(
+        "musterctl.state.SkillsManager.run_install", staticmethod(canonical_only)
+    )
+    initializer = ProjectInitializer(project_catalog)
+    plan = initializer.plan(
+        "missing-adapter", "base", ["project-helper"], False, tmp_path
+    )
+    with pytest.raises(MusterctlError) as error:
+        initializer.apply(plan)
+    assert error.value.code == "project_skill_adapter_missing"
+    assert not plan.destination.exists()
 
 
 def test_concurrent_destination_is_not_overwritten(

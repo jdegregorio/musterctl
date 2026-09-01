@@ -83,6 +83,48 @@ def test_global_status_deduplicates_adapters_and_reports_unmanaged(
     assert states["local-helper"].status == "unmanaged"
 
 
+def test_global_prune_is_explicit_and_never_selects_managed_skills(
+    catalog: Catalog, isolated_home: Path
+) -> None:
+    unmanaged = isolated_home / ".agents" / "skills" / "local-helper"
+    unmanaged.mkdir(parents=True)
+    (unmanaged / "SKILL.md").write_text("# Local\n", encoding="utf-8")
+    adapter = isolated_home / ".codex" / "skills" / "local-helper"
+    adapter.parent.mkdir(parents=True)
+    adapter.symlink_to(unmanaged, target_is_directory=True)
+    manager = SkillsManager(catalog, isolated_home)
+    actions = manager.plan_prune(("local-helper",))
+    assert actions[0].paths == (unmanaged, adapter)
+    manager.apply_prune(actions)
+    assert not unmanaged.exists()
+    assert not adapter.exists()
+    with pytest.raises(MusterctlError) as error:
+        manager.plan_prune(("musterctl",))
+    assert error.value.code == "managed_skill_prune_blocked"
+
+
+def test_global_roots_and_skill_links_cannot_escape_home(
+    catalog: Catalog, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text("# Outside\n", encoding="utf-8")
+    agents = home / ".agents"
+    agents.mkdir(parents=True)
+    (agents / "skills").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(MusterctlError) as root_error:
+        global_skill_states(catalog, home)
+    assert root_error.value.code == "global_skill_root_invalid"
+    (agents / "skills").unlink()
+    skill_root = agents / "skills"
+    skill_root.mkdir()
+    (skill_root / "musterctl").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(MusterctlError) as path_error:
+        global_skill_states(catalog, home)
+    assert path_error.value.code == "global_skill_path_invalid"
+
+
 def test_unverified_skill_state(catalog: Catalog, isolated_home: Path) -> None:
     skill = catalog.skill("musterctl")
     catalog.skills["musterctl"] = replace(skill, content_sha256=None)

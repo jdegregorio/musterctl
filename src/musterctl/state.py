@@ -5,12 +5,14 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from musterctl.catalog import Catalog, SkillSpec
-from musterctl.errors import EXIT_ENVIRONMENT, MusterctlError
+from musterctl.errors import EXIT_CONFLICT, EXIT_ENVIRONMENT, MusterctlError
+from musterctl.global_lock import read_global_lock, write_global_lock
 from musterctl.hashing import hash_tree
 from musterctl.resources import runtime_home
 from musterctl.sources import materialized_source
@@ -34,6 +36,13 @@ class SyncAction:
     skill: SkillSpec
     operation: str
     command: tuple[str, ...]
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PruneAction:
+    name: str
+    paths: tuple[Path, ...]
 
 
 def find_project_root(start: Path | None = None) -> Path | None:
@@ -58,6 +67,23 @@ def _global_candidates(home: Path, name: str) -> tuple[Path, ...]:
     return tuple(root / name for root in _global_roots(home))
 
 
+def _validate_global_roots(home: Path) -> None:
+    selected_home = home.resolve()
+    for root in _global_roots(home):
+        if not root.exists() and not root.is_symlink():
+            continue
+        try:
+            root.resolve().relative_to(selected_home)
+        except ValueError as exc:
+            raise MusterctlError(
+                "global_skill_root_invalid",
+                "A global skill root escapes the selected home directory.",
+                EXIT_ENVIRONMENT,
+                {"path": root},
+                ("replace the escaping root with a directory inside the home",),
+            ) from exc
+
+
 def _existing_unique(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     unique: list[Path] = []
     resolved: set[Path] = set()
@@ -71,9 +97,26 @@ def _existing_unique(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(unique)
 
 
-def global_skill_state(skill: SkillSpec, home: Path) -> SkillState:
+def _validate_global_paths(home: Path, paths: tuple[Path, ...]) -> None:
+    selected_home = home.resolve()
+    for path in paths:
+        try:
+            path.resolve().relative_to(selected_home)
+        except ValueError as exc:
+            raise MusterctlError(
+                "global_skill_path_invalid",
+                "A global skill path escapes the selected home directory.",
+                EXIT_ENVIRONMENT,
+                {"path": path},
+            ) from exc
+
+
+def global_skill_state(
+    skill: SkillSpec, home: Path, installed_snapshot: str | None = None
+) -> SkillState:
     expected = skill.content_sha256 or ""
     paths = _existing_unique(_global_candidates(home, skill.name))
+    _validate_global_paths(home, paths)
     if not paths:
         return SkillState(
             skill.name, "global", "missing", skill.update_policy, expected, None, ()
@@ -81,8 +124,12 @@ def global_skill_state(skill: SkillSpec, home: Path) -> SkillState:
     hashes = tuple(hash_tree(path.resolve()) for path in paths)
     if not expected:
         status = "unverified"
+    elif all(value == expected for value in hashes):
+        status = "current"
+    elif installed_snapshot and all(value == installed_snapshot for value in hashes):
+        status = "update"
     else:
-        status = "current" if all(value == expected for value in hashes) else "drift"
+        status = "drift"
     return SkillState(
         skill.name,
         "global",
@@ -96,8 +143,18 @@ def global_skill_state(skill: SkillSpec, home: Path) -> SkillState:
 
 def global_skill_states(catalog: Catalog, home: Path | None = None) -> list[SkillState]:
     selected_home = home or runtime_home()
+    _validate_global_roots(selected_home)
+    lock = read_global_lock(selected_home)
     states = [
-        global_skill_state(catalog.skills[name], selected_home)
+        global_skill_state(
+            catalog.skills[name],
+            selected_home,
+            (
+                str(lock[name].get("content_sha256"))
+                if name in lock and lock[name].get("content_sha256")
+                else None
+            ),
+        )
         for name in catalog.global_profile.skills
     ]
     managed_names = set(catalog.global_profile.skills)
@@ -116,6 +173,7 @@ def global_skill_states(catalog: Catalog, home: Path | None = None) -> list[Skil
     for name in unmanaged_names:
         paths = _existing_unique(_global_candidates(selected_home, name))
         if paths:
+            _validate_global_paths(selected_home, paths)
             states.append(
                 SkillState(
                     name,
@@ -205,7 +263,6 @@ def project_skill_states(catalog: Catalog, project: Path) -> list[SkillState]:
         configured = catalog.skills.get(name)
         if (
             status == "current"
-            and policy == "latest"
             and configured is not None
             and configured.content_sha256
             and configured.content_sha256 != expected
@@ -294,13 +351,24 @@ class SkillsManager:
             else:
                 self.run_install(command, cwd=cwd)
 
-    def plan(self) -> list[SyncAction]:
+    def plan(self, *, replace_drift: bool = False) -> list[SyncAction]:
         actions: list[SyncAction] = []
         for state in self.statuses():
             if state.status in {"current", "unmanaged"}:
                 continue
             skill = self.catalog.skills[state.name]
-            operation = "install" if state.status == "missing" else "repair"
+            if state.status == "drift" and not replace_drift:
+                actions.append(
+                    SyncAction(
+                        skill,
+                        "blocked_local_changes",
+                        (),
+                        "installed content differs from the catalog; inspect or "
+                        "move the change to source before replacement",
+                    )
+                )
+                continue
+            operation = "install" if state.status == "missing" else "replace"
             actions.append(
                 SyncAction(
                     skill,
@@ -349,9 +417,26 @@ class SkillsManager:
             )
 
     def apply(self, actions: list[SyncAction]) -> None:
+        blocked = [
+            action.skill.name
+            for action in actions
+            if action.operation == "blocked_local_changes"
+        ]
+        if blocked:
+            raise MusterctlError(
+                "local_skill_changes",
+                "Global skill changes were found and nothing was overwritten.",
+                EXIT_CONFLICT,
+                {"skills": ",".join(blocked)},
+                (
+                    f"musterctl skills diff {blocked[0]}",
+                    f"musterctl skills source {blocked[0]}",
+                    "rerun with --replace-drift only to discard installed changes",
+                ),
+            )
         for action in actions:
             self.install_verified(action.skill, global_scope=True)
-        remaining = self.plan()
+        remaining = self.plan(replace_drift=True)
         if remaining:
             raise MusterctlError(
                 "skill_sync_incomplete",
@@ -360,6 +445,90 @@ class SkillsManager:
                 EXIT_ENVIRONMENT,
                 {"skills": ",".join(action.skill.name for action in remaining)},
                 ("musterctl skills status", "musterctl skills diff <skill>"),
+            )
+        write_global_lock(self.catalog, self.home)
+
+    def plan_prune(
+        self,
+        names: tuple[str, ...] = (),
+        *,
+        all_unmanaged: bool = False,
+    ) -> list[PruneAction]:
+        _validate_global_roots(self.home)
+        canonical = self.home / ".agents" / "skills"
+        unmanaged = (
+            sorted(
+                path.name
+                for path in canonical.iterdir()
+                if not path.name.startswith(".")
+                and path.name not in self.catalog.global_profile.skills
+                and (path.is_dir() or path.is_symlink())
+                and (path / "SKILL.md").is_file()
+            )
+            if canonical.is_dir()
+            else []
+        )
+        selected = list(unmanaged if all_unmanaged else names)
+        if not all_unmanaged and not selected:
+            selected = unmanaged
+        selected = list(dict.fromkeys(selected))
+        managed = sorted(set(selected) & set(self.catalog.global_profile.skills))
+        if managed:
+            raise MusterctlError(
+                "managed_skill_prune_blocked",
+                "Managed global skills cannot be pruned.",
+                EXIT_CONFLICT,
+                {"skills": ",".join(managed)},
+                ("remove the skill from the catalog global profile first",),
+            )
+        unknown = sorted(set(selected) - set(unmanaged))
+        if unknown:
+            raise MusterctlError(
+                "unknown_unmanaged_skill",
+                "A requested skill is not an unmanaged canonical global install.",
+                fields={"skills": ",".join(unknown)},
+                next_actions=("musterctl skills status",),
+            )
+        actions: list[PruneAction] = []
+        for name in selected:
+            paths = tuple(
+                path
+                for path in _global_candidates(self.home, name)
+                if path.is_symlink()
+                or (path.is_dir() and (path / "SKILL.md").is_file())
+            )
+            actions.append(PruneAction(name, paths))
+        return actions
+
+    def apply_prune(self, actions: list[PruneAction]) -> None:
+        for action in actions:
+            for path in action.paths:
+                try:
+                    path.relative_to(self.home)
+                    path.parent.resolve().relative_to(self.home.resolve())
+                    if not path.is_symlink():
+                        path.resolve().relative_to(self.home.resolve())
+                except ValueError as exc:
+                    raise MusterctlError(
+                        "prune_path_invalid",
+                        "A prune target escapes the selected home directory.",
+                        EXIT_ENVIRONMENT,
+                        {"path": path},
+                    ) from exc
+                if path.is_symlink():
+                    path.unlink()
+                elif path.is_dir():
+                    shutil.rmtree(path)
+        remaining = {
+            state.name for state in self.statuses() if state.status == "unmanaged"
+        }
+        failed = sorted(action.name for action in actions if action.name in remaining)
+        if failed:
+            raise MusterctlError(
+                "skill_prune_incomplete",
+                "One or more unmanaged global skills remain after pruning.",
+                EXIT_ENVIRONMENT,
+                {"skills": ",".join(failed)},
             )
 
 
