@@ -1,6 +1,6 @@
 # Command reference
 
-Generated from the same metadata that powers CLI help and standalone musterctl skill guidance. The running `musterctl <command> --help` interface is authoritative.
+Generated from the same metadata that powers CLI help and the colocated musterctl skill guidance. The running `musterctl <command> --help` interface is authoritative.
 
 | Command | Purpose | Mutation | Safety |
 | --- | --- | --- | --- |

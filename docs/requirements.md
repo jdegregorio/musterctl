@@ -7,10 +7,10 @@ behaviors below therefore cover all available commands, policies, flows, and
 FR-48 through FR-63.
 
 Later owner decisions supersede two attachment details: the public tool is named
-`musterctl`, and the tool repository/package owns no catalog, Agent Skill, or
-project-template source. The catalog is local developer-environment policy; each
-source lives in an independent repository. Standalone skill guidance remains
-generated from the tool's shared command metadata.
+`musterctl`, and its generated discovery skill is colocated with the tool source.
+The Python distribution does not bundle that skill. The catalog remains local
+developer-environment policy, while independent skills and templates live in
+their own repositories.
 
 ## Product outcome
 
@@ -31,7 +31,7 @@ prompt, color-only meaning, animation, or TTY requirement.
 | R-05 | Discovery separates globally provided, recommended, and available project skills. | handler tests |
 | R-06 | A global skill requested for a project fails as `skill_already_global`. | initialization tests |
 | R-07 | Third-party sources require full immutable commits embedded in installer selectors plus SHA-256 digests. | catalog validation tests |
-| R-08 | The tool repository and wheel contain no catalog, skill, or template source. | boundary and wheel tests |
+| R-08 | The repository contains no catalog, template, or skill source other than its generated `skills/musterctl`; the wheel contains none of those payloads. | boundary and wheel tests |
 | R-09 | `init --plan` validates the complete request with zero fetch, installer call, or filesystem mutation. | no-mutation contract tests |
 | R-10 | Apply fetches exact template layers, installs selected skills from source through Skills CLI, hashes/locks them, initializes Git, validates, and publishes without a prompt. | project journey tests |
 | R-11 | Initialization is transactional; existing/racing destinations are never overwritten and temporary work is cleaned. | failure-path tests |
@@ -42,7 +42,7 @@ prompt, color-only meaning, animation, or TTY requirement.
 | R-16 | `skills diff` fetches and verifies the configured source, compares files, and caps output. | source/diff tests |
 | R-17 | Success is compact deterministic text with explicit empty collections and likely next actions. | output/shape tests |
 | R-18 | Failures have stable categories, exit codes, fields, and recovery actions. | CLI/failure tests |
-| R-19 | Command docs and standalone skill guidance share metadata with help and are drift-checked. | generation and CI tests |
+| R-19 | Command docs and the colocated musterctl skill share metadata with help and are drift-checked. | generation and CI tests |
 | R-20 | The wheel runs outside the checkout, bootstraps an empty external catalog, and contains no policy/content payload. | wheel smoke test |
 | R-21 | Project materialization validates isolated local Git sources and a generated repository. | project journey tests |
 | R-22 | Core behavior works without a TTY and with stdin closed. | subprocess tests |
@@ -54,7 +54,7 @@ prompt, color-only meaning, animation, or TTY requirement.
 
 | Supplied requirement | Implementation |
 | --- | --- |
-| FR-48 Agent-primary user | Compact output, contextual actions, standalone discovery skill |
+| FR-48 Agent-primary user | Compact output, contextual actions, colocated discovery skill |
 | FR-49 Noninteractive core | `argparse`, closed stdin, no prompt paths |
 | FR-50 Agent-driven template selection | `templates list/show` |
 | FR-51 Agent-driven skill selection | `skills available` classes and metadata |
@@ -63,9 +63,9 @@ prompt, color-only meaning, animation, or TTY requirement.
 | FR-54 Deterministic mutation | verified source transaction or structured failure |
 | FR-55 Compact structured output | deterministic TOON-like renderer |
 | FR-56 CLI introspection | dashboard, help, catalog, and next actions |
-| FR-57 Minimal installed skill | independently published generated guidance |
+| FR-57 Minimal installed skill | colocated generated guidance installed from the external catalog |
 | FR-58 Live documentation authority | CLI help is authoritative in docs and skill |
-| FR-59 Generated guidance | `musterctl-build --check` and standalone output |
+| FR-59 Generated guidance | `musterctl-build --check` covers docs and the colocated skill |
 | FR-60 Bootstrap independence | public wheel plus `setup` before a catalog exists |
 | FR-61 No Home Manager skill special case | Home Manager manages package/config; skill sync uses Skills CLI |
 | FR-62 Structured recoverability | `MusterctlError`, stable output, exit classes |
@@ -89,6 +89,8 @@ prompt, color-only meaning, animation, or TTY requirement.
 - It does not remove unrecognized installed skills.
 - It does not activate global skills merely because the package is installed or
   tested.
-- It does not own or bundle the catalog, skill source, or template source.
+- It owns only its generated discovery skill source; it does not own the catalog,
+  independent skill source, or template source, and the wheel bundles none of
+  them.
 - Setup imports only entries with clear Skills CLI lineage; untracked installs
   remain unmanaged until source metadata is supplied deliberately.

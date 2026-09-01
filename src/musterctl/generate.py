@@ -1,4 +1,4 @@
-"""Generate command docs and standalone skill guidance from shared metadata."""
+"""Generate command docs and musterctl skill guidance from shared metadata."""
 
 from __future__ import annotations
 
@@ -57,8 +57,9 @@ def render_commands() -> str:
         "# Command reference",
         "",
         (
-            "Generated from the same metadata that powers CLI help and standalone "
-            "musterctl skill guidance. The running `musterctl <command> --help` "
+            "Generated from the same metadata that powers CLI help and the "
+            "colocated musterctl skill guidance. The running "
+            "`musterctl <command> --help` "
             "interface is authoritative."
         ),
         "",
@@ -81,7 +82,10 @@ def render_commands() -> str:
 
 def generated_files(root: Path | None = None) -> dict[Path, str]:
     selected_root = root or Path(__file__).resolve().parents[2]
-    return {selected_root / "docs" / "commands.md": render_commands()}
+    return {
+        selected_root / "docs" / "commands.md": render_commands(),
+        selected_root / "skills" / "musterctl" / "SKILL.md": render_skill(),
+    }
 
 
 def _write_or_check(path: Path, content: str, check: bool) -> bool:
@@ -96,7 +100,7 @@ def build(
     check: bool,
     root: Path | None = None,
     skill_output: Path | None = None,
-    include_docs: bool = True,
+    include_repository_artifacts: bool = True,
 ) -> int:
     drift = (
         [
@@ -104,7 +108,7 @@ def build(
             for path, content in generated_files(root).items()
             if _write_or_check(path, content, check)
         ]
-        if include_docs
+        if include_repository_artifacts
         else []
     )
     if skill_output is not None and _write_or_check(
@@ -127,17 +131,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skill-output",
         type=Path,
-        help="also write or check standalone musterctl SKILL.md guidance",
+        help="also write or check an exported copy of musterctl SKILL.md guidance",
     )
     parser.add_argument(
         "--skill-only",
         action="store_true",
-        help="skip repository docs; requires --skill-output",
+        help="skip committed repository artifacts; requires --skill-output",
     )
     parser.add_argument(
         "--print-skill",
         action="store_true",
-        help="print standalone musterctl skill guidance to stdout",
+        help="print musterctl skill guidance to stdout",
     )
     arguments = parser.parse_args(argv)
     if arguments.print_skill:
@@ -148,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     return build(
         arguments.check,
         skill_output=arguments.skill_output,
-        include_docs=not arguments.skill_only,
+        include_repository_artifacts=not arguments.skill_only,
     )
 
 
