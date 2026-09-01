@@ -56,6 +56,22 @@ def main() -> int:
                 sys.stderr.write(result.stdout)
                 sys.stderr.write(result.stderr)
                 return result.returncode
+        version_result = subprocess.run(
+            (sys.executable, "-m", "musterctl", "--version"),
+            cwd=isolated,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if version_result.returncode != 0 or version_result.stdout.strip() != version:
+            sys.stderr.write(version_result.stdout)
+            sys.stderr.write(version_result.stderr)
+            raise SystemExit(
+                "built package version does not match pyproject.toml: "
+                f"expected {version!r}, got {version_result.stdout.strip()!r}"
+            )
     print(f"Wheel smoke test passed: {wheels[0].name}")
     return 0
 
