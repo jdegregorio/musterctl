@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "musterctl"
+version = "0.1.0"
+description = "Agent-native control plane for external skill catalogs"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+authors = [{ name = "Joe DeGregorio" }]
+keywords = ["agents", "cli", "developer-tools", "skills"]
+urls = { Homepage = "https://github.com/jdegregorio/musterctl", Repository = "https://github.com/jdegregorio/musterctl", Issues = "https://github.com/jdegregorio/musterctl/issues" }
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.scripts]
+musterctl = "musterctl.cli:main"
+musterctl-build = "musterctl.generate:main"
+
+[dependency-groups]
+dev = [
+  "coverage[toml]>=7.10,<8",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pyyaml>=6.0.2,<7",
+  "ruff>=0.12,<0.15",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/docs",
+  "/src",
+  "/tests",
+  "/AGENTS.md",
+  "/README.md",
+  "/pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/musterctl"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["musterctl"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["A", "B", "C4", "E", "F", "I", "N", "PERF", "PIE", "PTH", "RUF", "SIM", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]

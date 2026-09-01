@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+uv lock --check
+# Compare the complete tracked tree with Git's canonical empty tree so this also
+# works in a single-commit CI checkout.
+git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 --
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
+uv run musterctl-build --check
+for forbidden in catalog skills templates; do
+  if [[ -e "$forbidden" ]]; then
+    echo "repository_boundary_error: $forbidden must be external" >&2
+    exit 1
+  fi
+done
+uv build --offline
+uv run coverage erase
+uv run coverage run -m pytest
+uv run coverage report
+uv run python scripts/wheel_smoke.py
