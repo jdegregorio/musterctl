@@ -5,9 +5,12 @@ environment. It reads your external catalog, reports skill state, reconciles a
 global profile through the Skills CLI, and creates projects from pinned Git
 template sources.
 
-The package intentionally contains no catalog, Agent Skill, or project-template
-source. Those belong to their owners' repositories; your catalog records which
-sources and revisions make up your environment.
+The Python package intentionally contains no catalog, Agent Skill payload, or
+project-template source. The repository does colocate musterctl's own generated
+discovery skill with the CLI, following the same source-ownership pattern as
+gh-axi. Independent skills and templates remain in their owners' repositories;
+your external catalog records which sources and revisions make up your
+environment.
 
 ## Install and get started
 
@@ -94,10 +97,12 @@ CI.
 Repository contents are deliberately narrow:
 
 - `src/musterctl/`: dependency-free runtime and CLI
+- `skills/musterctl/`: generated discovery skill, installed through the catalog
 - `docs/`: architecture, requirements traceability, and generated commands
 - `tests/`: unit, integration, packaging, and end-to-end contracts
 - `flake.nix`: pinned-consumer-friendly Nix package interface
 
-Standalone `musterctl` Agent Skill guidance is generated for its own repository
-with `musterctl-build --skill-only --skill-output SKILL.md`; it is not bundled
-here.
+`skills/musterctl/SKILL.md` is generated from the same metadata as CLI help and
+command documentation. `musterctl-build --check` prevents drift. The skill is
+source-controlled here but is not bundled in the Python wheel or installed as a
+side effect of installing the command.

@@ -1,0 +1,6 @@
+interface:
+  display_name: "musterctl"
+  short_description: "Discover and operate the agent environment"
+  default_prompt: "Use $musterctl to inspect my agent environment and choose the next safe action."
+policy:
+  allow_implicit_invocation: true

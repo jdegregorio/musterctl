@@ -8,7 +8,8 @@ PRODUCT_DESCRIPTION = "Agent-native control plane for external skill catalogs."
 
 POLICIES = (
     "The local catalog is versioned workstation policy, not package state.",
-    "The tool package contains no catalog, skill, or project-template source.",
+    "The Python package contains no catalog, Agent Skill payload, or "
+    "project-template source; this skill is versioned beside the CLI source.",
     "Pinned skills use explicit source revisions and content digests.",
     "Project skills are copied into the repository and recorded in skills-lock.json.",
     "Global skills must not be duplicated into projects.",

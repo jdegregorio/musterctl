@@ -13,10 +13,13 @@ def test_committed_generated_files_are_current() -> None:
     assert (root / "docs" / "commands.md").read_text(
         encoding="utf-8"
     ) == render_commands()
+    assert (root / "skills" / "musterctl" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == render_skill()
 
 
 def test_generator_detects_and_repairs_drift(tmp_path: Path) -> None:
-    path = tmp_path / "standalone-skill" / "SKILL.md"
+    path = tmp_path / "exported-skill" / "SKILL.md"
     assert build(False, tmp_path, path) == 0
     assert path.read_text(encoding="utf-8") == render_skill()
     assert build(True, tmp_path, path) == 0
@@ -27,10 +30,11 @@ def test_generator_detects_and_repairs_drift(tmp_path: Path) -> None:
 def test_skill_only_generation_does_not_require_repository_docs(
     tmp_path: Path,
 ) -> None:
-    output = tmp_path / "standalone" / "SKILL.md"
-    assert build(False, tmp_path, output, include_docs=False) == 0
+    output = tmp_path / "exported" / "SKILL.md"
+    assert build(False, tmp_path, output, include_repository_artifacts=False) == 0
     assert not (tmp_path / "docs" / "commands.md").exists()
-    assert build(True, tmp_path, output, include_docs=False) == 0
+    assert not (tmp_path / "skills" / "musterctl" / "SKILL.md").exists()
+    assert build(True, tmp_path, output, include_repository_artifacts=False) == 0
 
 
 def test_generated_skill_defers_to_live_cli_and_includes_policy() -> None:
@@ -50,7 +54,7 @@ def test_generated_guidance_uses_the_installed_command() -> None:
     assert "uvx" not in commands
 
 
-def test_generator_cli_can_print_and_write_standalone_skill(
+def test_generator_cli_can_print_and_write_exported_skill(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["--print-skill"]) == 0
