@@ -59,8 +59,8 @@ package state. Add and adoption apply resolve the configured Git ref and verify
 `SKILL.md` before recording a commit and digest. Configuration changes global
 membership/scopes; removal cleans policy references but preserves installed
 content. Every plan validates an in-memory prospective catalog without fetching
-or writing. Apply uses compare-and-swap plus atomic replacement, so a concurrent
-edit is not lost.
+or writing. Apply holds an exclusive cross-process lock across compare-and-swap
+and atomic replacement, so overlapping musterctl writers cannot lose an edit.
 
 When Home Manager publishes a generated runtime target, mutations point
 `MUSTERCTL_CATALOG` or `--catalog` at the authoritative working-tree source. The

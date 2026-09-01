@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from musterctl.catalog import Catalog
-from musterctl.catalog_store import CatalogStore
+from musterctl.catalog_store import CatalogStore, _exclusive_catalog_lock
 from musterctl.errors import MusterctlError
 from musterctl.hashing import hash_tree
 from musterctl.sources import SourceSnapshot, source_selector
@@ -121,3 +123,43 @@ def test_catalog_store_rejects_unsupported_values(catalog: Catalog) -> None:
     with pytest.raises(MusterctlError) as error:
         store.rendered()
     assert error.value.code == "catalog_write_unsupported"
+
+
+def test_catalog_compare_and_swap_is_serialized_across_processes(
+    catalog: Catalog, tmp_path: Path
+) -> None:
+    ready = tmp_path / "ready"
+    worker = """
+import sys
+from pathlib import Path
+from musterctl.catalog import Catalog
+from musterctl.catalog_store import CatalogStore
+from musterctl.errors import MusterctlError
+
+catalog = Catalog.load(Path(sys.argv[1]))
+store = CatalogStore(catalog)
+store.configure_skill("musterctl", scopes=None, global_profile=False)
+Path(sys.argv[2]).write_text("ready", encoding="utf-8")
+try:
+    store.write()
+except MusterctlError as error:
+    print(error.code)
+"""
+    original = catalog.path.read_text(encoding="utf-8")
+    with _exclusive_catalog_lock(catalog.path):
+        process = subprocess.Popen(
+            (sys.executable, "-c", worker, str(catalog.path), str(ready)),
+            cwd=Path(__file__).resolve().parents[2],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 5
+        while not ready.is_file() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.is_file()
+        assert process.poll() is None
+        catalog.path.write_text(original + "\n# concurrent update\n", encoding="utf-8")
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "catalog_changed"

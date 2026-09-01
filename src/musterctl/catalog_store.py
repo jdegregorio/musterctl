@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -16,6 +20,81 @@ from musterctl.errors import EXIT_CONFLICT, EXIT_ENVIRONMENT, MusterctlError
 from musterctl.sources import SourceSnapshot, source_selector
 
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _lock_path(catalog_path: Path) -> Path:
+    identity = hashlib.sha256(os.fsencode(catalog_path.resolve())).hexdigest()
+    user = str(os.getuid()) if hasattr(os, "getuid") else "user"
+    directory = Path(tempfile.gettempdir()) / f"musterctl-{user}" / "catalog-locks"
+    try:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        metadata = directory.lstat()
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise OSError("catalog lock directory is not a directory")
+        if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+            raise OSError("catalog lock directory has an unexpected owner")
+        if metadata.st_mode & 0o077:
+            directory.chmod(0o700)
+    except OSError as exc:
+        raise MusterctlError(
+            "catalog_lock_failed",
+            f"The catalog lock directory is unavailable: {exc}",
+            EXIT_ENVIRONMENT,
+            {"path": directory},
+        ) from exc
+    return directory / f"{identity}.lock"
+
+
+@contextmanager
+def _exclusive_catalog_lock(catalog_path: Path) -> Iterator[None]:
+    path = _lock_path(catalog_path)
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("catalog lock is not a regular file")
+        if os.name == "nt":  # pragma: no cover - exercised on Windows
+            import msvcrt
+
+            if metadata.st_size == 0:
+                os.write(descriptor, b"\0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except OSError as exc:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise MusterctlError(
+            "catalog_lock_failed",
+            f"The catalog could not be locked for mutation: {exc}",
+            EXIT_ENVIRONMENT,
+            {"path": path},
+        ) from exc
+    try:
+        yield
+    finally:
+        try:
+            if os.name == "nt":  # pragma: no cover - exercised on Windows
+                import msvcrt
+
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(  # type: ignore[attr-defined]
+                    descriptor,
+                    msvcrt.LK_UNLCK,  # type: ignore[attr-defined]
+                    1,
+                )
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def _key(value: str) -> str:
@@ -275,53 +354,54 @@ class CatalogStore:
 
     def write(self) -> Path:
         content = self.rendered()
-        try:
-            current = self.path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise MusterctlError(
-                "catalog_write_failed",
-                f"The catalog cannot be read before writing: {exc}",
-                EXIT_ENVIRONMENT,
-                {"path": self.path},
-            ) from exc
-        if current != self.original:
-            raise MusterctlError(
-                "catalog_changed",
-                "The catalog changed while the command was running and was not "
-                "overwritten.",
-                EXIT_CONFLICT,
-                {"path": self.path},
-                ("review the concurrent change and rerun the command",),
-            )
-        descriptor: int | None = None
-        temporary: Path | None = None
-        try:
-            descriptor, raw_path = tempfile.mkstemp(
-                prefix=f".{self.path.name}.", dir=self.path.parent
-            )
-            temporary = Path(raw_path)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                descriptor = None
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            temporary.chmod(self.path.stat().st_mode & 0o777)
-            temporary.replace(self.path)
-            temporary = None
-        except OSError as exc:
-            raise MusterctlError(
-                "catalog_write_failed",
-                f"The catalog could not be updated atomically: {exc}",
-                EXIT_ENVIRONMENT,
-                {"path": self.path},
-                (
-                    "edit the authoritative catalog source or pass --catalog to it",
-                    "do not edit a generated Home Manager target",
-                ),
-            ) from exc
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        with _exclusive_catalog_lock(self.path):
+            try:
+                current = self.path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise MusterctlError(
+                    "catalog_write_failed",
+                    f"The catalog cannot be read before writing: {exc}",
+                    EXIT_ENVIRONMENT,
+                    {"path": self.path},
+                ) from exc
+            if current != self.original:
+                raise MusterctlError(
+                    "catalog_changed",
+                    "The catalog changed while the command was running and was not "
+                    "overwritten.",
+                    EXIT_CONFLICT,
+                    {"path": self.path},
+                    ("review the concurrent change and rerun the command",),
+                )
+            descriptor: int | None = None
+            temporary: Path | None = None
+            try:
+                descriptor, raw_path = tempfile.mkstemp(
+                    prefix=f".{self.path.name}.", dir=self.path.parent
+                )
+                temporary = Path(raw_path)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    descriptor = None
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary.chmod(self.path.stat().st_mode & 0o777)
+                temporary.replace(self.path)
+                temporary = None
+            except OSError as exc:
+                raise MusterctlError(
+                    "catalog_write_failed",
+                    f"The catalog could not be updated atomically: {exc}",
+                    EXIT_ENVIRONMENT,
+                    {"path": self.path},
+                    (
+                        "edit the authoritative catalog source or pass --catalog to it",
+                        "do not edit a generated Home Manager target",
+                    ),
+                ) from exc
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
         return self.path
