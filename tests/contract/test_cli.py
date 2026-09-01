@@ -19,6 +19,12 @@ from musterctl.cli import main
         ["catalog", "--help"],
         ["catalog", "search", "--help"],
         ["catalog", "show", "--help"],
+        ["catalog", "add", "--help"],
+        ["catalog", "adopt", "--help"],
+        ["catalog", "remove", "--help"],
+        ["catalog", "configure", "--help"],
+        ["catalog", "check-updates", "--help"],
+        ["catalog", "update", "--help"],
         ["templates", "--help"],
         ["templates", "list", "--help"],
         ["templates", "show", "--help"],
@@ -27,6 +33,12 @@ from musterctl.cli import main
         ["skills", "status", "--help"],
         ["skills", "sync", "--help"],
         ["skills", "diff", "--help"],
+        ["skills", "source", "--help"],
+        ["skills", "checkout", "--help"],
+        ["skills", "prune", "--help"],
+        ["projects", "--help"],
+        ["projects", "status", "--help"],
+        ["projects", "sync", "--help"],
         ["setup", "--help"],
         ["setup", "inspect", "--help"],
         ["setup", "init", "--help"],
@@ -40,7 +52,9 @@ def test_help_exists_at_every_level(
     assert "usage:" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("group", [["catalog"], ["templates"], ["skills"], ["setup"]])
+@pytest.mark.parametrize(
+    "group", [["catalog"], ["templates"], ["skills"], ["projects"], ["setup"]]
+)
 def test_command_groups_without_subcommand_show_help(
     group: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -52,7 +66,7 @@ def test_command_groups_without_subcommand_show_help(
 
 def test_version_is_available(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--version"]) == 0
-    assert capsys.readouterr().out.strip() == "0.1.3"
+    assert capsys.readouterr().out.strip() == "0.2.0"
 
 
 def test_unknown_flags_and_values_are_structured(
@@ -173,6 +187,45 @@ def test_sync_dry_run_does_not_invoke_subprocess(
     assert "mode: plan" in output
     assert "mutations: 0" in output
     assert "--global" in output
+
+
+def test_catalog_add_plan_does_not_fetch_or_write(
+    catalog: Catalog,
+    isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = catalog.path.read_bytes()
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("plan fetched a source")
+
+    monkeypatch.setattr("musterctl.handlers.inspect_source", forbidden)
+    assert (
+        main(
+            [
+                "catalog",
+                "add",
+                "planned-helper",
+                "--source",
+                "https://example.invalid/helper.git",
+                "--plan",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "mode: plan" in output
+    assert "mutations: 0" in output
+    assert "--plan" not in output.split("next[1]:", 1)[1]
+    assert catalog.path.read_bytes() == original
+
+
+def test_prune_requires_explicit_selection_when_applying(
+    isolated_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["skills", "prune"]) == 3
+    assert "error: prune_selection_required" in capsys.readouterr().err
 
 
 def test_noninteractive_subprocess_runs_with_closed_stdin(

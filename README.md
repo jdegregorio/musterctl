@@ -1,80 +1,188 @@
 # musterctl
 
-`musterctl` is a small, noninteractive control plane for an agent development
-environment. It reads your external catalog, reports skill state, reconciles a
-global profile through the Skills CLI, and creates projects from pinned Git
-template sources.
+`musterctl` is a noninteractive control plane for an Agent Skill environment.
+It solves a common failure mode in agent-first development: skills become
+anonymous copies scattered across global agent directories and repositories,
+then drift apart with no reliable path back to source.
 
-The Python package intentionally contains no catalog, Agent Skill payload, or
-project-template source. The repository does colocate musterctl's own generated
-discovery skill with the CLI, following the same source-ownership pattern as
-gh-axi. Independent skills and templates remain in their owners' repositories;
-your external catalog records which sources and revisions make up your
-environment.
+The tool keeps a small external catalog of source-backed skills and project
+templates, compares that policy with the machine, and exposes deterministic
+inspect → plan → apply → verify workflows for agents. It can:
+
+- discover global and project skills, including duplicate names and local drift;
+- adopt source-tracked installs or add a new Git-backed skill to the catalog;
+- maintain an intentional global profile without silently deleting anything;
+- route skill improvements back to source, then roll them out across projects;
+- create self-contained projects from pinned templates and skill requirements.
+
+The Python package owns behavior only. It includes no personal catalog,
+independent skill payload, or project-template source. The generated
+`musterctl` discovery skill is colocated in this repository because it is part
+of the tool's interface, but it is not bundled in the wheel.
 
 ## Install and get started
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then choose
-either a persistent command or an ephemeral invocation:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then add
+the command to your workstation:
 
 ```bash
-# Normal workstation installation; `musterctl` is added to PATH.
 uv tool install musterctl
 musterctl --version
-
-# Or run without a persistent installation.
-uvx musterctl --version
 ```
 
-For a managed developer environment, declare and pin the package there instead
-of running `uv tool install` manually. This repository also exposes a Nix flake,
-so Home Manager can install a pinned Git revision while managing the catalog at
-`~/.config/musterctl/catalog.toml`.
+`uv tool upgrade musterctl` upgrades that installation. For an ephemeral run,
+use `uvx musterctl ...` instead. A Nix flake is also provided for declarative,
+pinned installations.
 
-On first use, inspect skills previously installed by
-the pinned [`npx skills`](https://www.skills.sh/docs/cli) CLI release:
+On a machine that already has skills, start with a read-only inventory:
 
 ```bash
 musterctl setup inspect
-musterctl setup init --all-tracked --plan
-musterctl setup init --all-tracked
 ```
 
-`inspect` is read-only and reports which installations still have source
-lineage in `~/.agents/.skill-lock.json`. The plan shows what would enter the
-catalog. Apply creates the external catalog without changing any installed
-skill, and refuses to overwrite an existing catalog. Import individual entries
-with repeatable `--include <skill>` flags, or create an empty starter catalog
-with `musterctl setup init`.
+The scan covers canonical global roots and skill-bearing projects under
+`~/Repos` by default. Narrow it with repeatable `--project` or `--search-root`
+flags. It reports source lineage, content hashes, catalog status, and same-name
+content conflicts. A `no_source` item is deliberately not importable; keep it
+unmanaged until its source is placed in a dedicated repository (for example,
+by asking an agent to use `gh-axi`).
 
-Once a catalog exists:
+To create a first catalog, select exact tracked installs and preview the result:
 
 ```bash
-musterctl
-musterctl skills status
-musterctl skills sync --dry-run
-musterctl templates list
-musterctl init example --template python-cli --plan
+musterctl setup init --include-path ~/.agents/skills/example --plan
+musterctl setup init --include-path ~/.agents/skills/example
 ```
 
-The bare command shows ambient state and likely next actions. `--plan` and
-`--dry-run` perform validation without mutation; rerun the same complete request
-without the preview flag to apply it. Use `musterctl <command> --help` for the
-live interface.
+Use `--all-tracked` only when every unambiguous, source-tracked install should
+enter the starter catalog. Setup never changes installed content and refuses to
+overwrite an existing catalog.
 
-## Catalog model
+The catalog is meant to be version controlled—often in a developer-environment
+repository. Point `MUSTERCTL_CATALOG` or global `--catalog` at that authoritative
+working-tree file when using catalog mutation commands. A Home Manager-generated
+target can remain the read-only runtime copy; do not edit a Nix store target.
 
-A catalog is local policy, normally versioned with the developer environment.
-Each skill entry records the Skills CLI source selector, source repository/path,
-ownership, update policy, optional immutable commit, and expected content hash.
-Template entries compose independently versioned Git layers. `musterctl` never
-stores or silently substitutes their source.
+## Everyday lifecycle
 
-Every skill has a content digest; third-party skills must also be pinned to a
-full commit. Before mutation, `musterctl` fetches and verifies the source in an
-isolated checkout, then gives that verified local source to the pinned Skills
-CLI. A generated project records exact installed content in `skills-lock.json`.
-Unmanaged global skills are reported and left untouched.
+The compact [end-to-end journey map](docs/journeys.md) shows each starting state,
+plan, apply, and verified outcome.
+
+### Add or adopt a skill
+
+Add a newly discovered Git source by resolving its current ref to an immutable
+commit and digest:
+
+```bash
+musterctl catalog add discord-tools \
+  --source https://github.com/example/discord-tools.git \
+  --path skills/discord-tools \
+  --scope project \
+  --plan
+```
+
+Rerun the emitted command to apply. For an existing install with Skills CLI or
+project-lock lineage, use its exact path:
+
+```bash
+musterctl catalog adopt ~/.agents/skills/discord-tools --plan
+```
+
+Name collisions and source/content mismatches block adoption. Search, inspect,
+and maintain policy with:
+
+```bash
+musterctl catalog search discord
+musterctl catalog show discord-tools
+musterctl catalog configure discord-tools --global --scope global --scope project --plan
+musterctl catalog remove discord-tools --plan
+```
+
+Catalog removal removes policy references only. Installed copies remain until a
+separate, explicit cleanup.
+
+### Reconcile or tidy global skills
+
+```bash
+musterctl skills status
+musterctl skills sync --dry-run
+musterctl skills sync
+musterctl skills prune --plan
+```
+
+Sync manages only the catalog's global profile. A machine-local lock distinguishes
+an ordinary catalog update from an installed-copy edit; the latter blocks sync
+until it is moved to source or the user explicitly chooses `--replace-drift`.
+Prune selects unmanaged canonical global skills and their adapters, never
+catalog-managed skills or project content. Applying prune requires names or
+`--all-unmanaged`.
+
+### Improve a skill at source
+
+Installed copies are deployments. The durable improvement loop is:
+
+```bash
+musterctl skills diff discord-tools
+musterctl skills source discord-tools
+musterctl skills checkout discord-tools --plan
+# edit, test, commit, and push the source checkout
+musterctl catalog update discord-tools --plan
+musterctl catalog update discord-tools
+musterctl skills sync --dry-run
+musterctl projects sync --plan
+```
+
+`catalog check-updates` compares every configured source ref with its catalog
+snapshot. Catalog updates advance the immutable pin and digest together but do
+not silently touch installed copies. Global and project rollout remain separate,
+reviewable actions.
+
+### Create and maintain projects
+
+```bash
+musterctl templates list
+musterctl templates show python-cli
+musterctl skills available --template python-cli
+musterctl init example --template python-cli --defaults --plan
+musterctl init example --template python-cli --defaults
+```
+
+A template can carry `.musterctl/project.toml`:
+
+```toml
+[skills]
+required = ["discord-tools"]
+recommended = ["raspberry-pi-deployments"]
+```
+
+The catalog snapshots those names so planning performs no fetch. Apply verifies
+the manifest in the pinned template source, installs required skills plus any
+explicit/default selections, and records full source lineage in
+`skills-lock.json`.
+
+Later, compare and advance every managed project copy:
+
+```bash
+musterctl projects status
+musterctl projects sync --plan
+musterctl projects sync
+```
+
+Project sync never removes a skill. Local changes block the whole apply by
+default; each changed project is staged, its adapters and lock are updated, and
+its `scripts/check` must pass or that project is rolled back.
+
+## Catalog and safety model
+
+Every skill records a Git repository/path, editable source ref, resolved commit,
+content digest, ownership, allowed scopes, and update policy. Third-party skills
+must be pinned. Template layers are also immutable Git snapshots. Global skills
+cannot be duplicated into projects.
+
+Planning paths perform no Git fetch, installer call, or filesystem mutation.
+Read operations return compact deterministic text with explicit empty
+collections and recovery actions. Mutation requests never prompt, never replace
+an unrelated destination, and surface stable error categories and exit codes.
 
 ## Development
 
@@ -84,25 +192,10 @@ Clone only when contributing:
 git clone https://github.com/jdegregorio/musterctl.git
 cd musterctl
 uv sync --locked
-uv run musterctl setup init --output /tmp/musterctl-catalog.toml --plan
 ./scripts/check
 ```
 
-`uv sync --locked` creates the checkout's `.venv` from `uv.lock`; it is a
-development setup command, not an end-user installation step. `./scripts/check`
-checks the lock, formatting, lint, types, generated docs, repository boundaries,
-tests and branch coverage, and a built-wheel smoke journey on Linux and macOS in
-CI.
-
-Repository contents are deliberately narrow:
-
-- `src/musterctl/`: dependency-free runtime and CLI
-- `skills/musterctl/`: generated discovery skill, installed through the catalog
-- `docs/`: architecture, requirements traceability, and generated commands
-- `tests/`: unit, integration, packaging, and end-to-end contracts
-- `flake.nix`: pinned-consumer-friendly Nix package interface
-
-`skills/musterctl/SKILL.md` is generated from the same metadata as CLI help and
-command documentation. `musterctl-build --check` prevents drift. The skill is
-source-controlled here but is not bundled in the Python wheel or installed as a
-side effect of installing the command.
+`uv sync --locked` creates this checkout's development environment from
+`uv.lock`; it is not an end-user installation command. `./scripts/check` covers
+formatting, lint, types, generated guidance, repository boundaries, unit and
+integration journeys, branch coverage, and a built-wheel smoke test in CI.

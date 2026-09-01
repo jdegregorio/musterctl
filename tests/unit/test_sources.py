@@ -7,12 +7,19 @@ import pytest
 
 from musterctl.errors import MusterctlError
 from musterctl.hashing import hash_tree
-from musterctl.sources import copy_source, materialized_source
+from musterctl.sources import (
+    checkout_source,
+    copy_source,
+    inspect_source,
+    materialized_source,
+    source_selector,
+)
 
 
 def _repo(tmp_path: Path) -> tuple[Path, str, str]:
     repo = tmp_path / "source"
     (repo / "nested").mkdir(parents=True)
+    (repo / "nested" / "SKILL.md").write_text("# Helper\n", encoding="utf-8")
     (repo / "nested" / "value.txt").write_text("value\n", encoding="utf-8")
     subprocess.run(("git", "init", "--quiet", "-b", "main"), cwd=repo, check=True)
     subprocess.run(("git", "add", "."), cwd=repo, check=True)
@@ -122,3 +129,50 @@ def test_source_rejects_symlinks(tmp_path: Path) -> None:
     ):
         pass
     assert error.value.code == "source_symlink_unsupported"
+
+
+def test_inspect_and_checkout_editable_source(tmp_path: Path) -> None:
+    repo, revision, digest = _repo(tmp_path)
+    assert inspect_source(str(repo), "main", "nested").content_sha256 == digest
+    destination = tmp_path / "checkout"
+    checked_out = checkout_source(str(repo), "main", "nested", destination, digest)
+    assert checked_out.revision == revision
+    assert checked_out.selected == destination / "nested"
+    assert (checked_out.selected / "SKILL.md").is_file()
+    assert (
+        source_selector(
+            "https://github.com/example/helper.git", revision, "skills/helper"
+        )
+        == f"https://github.com/example/helper/tree/{revision}/skills/helper"
+    )
+
+
+def test_checkout_conflicts_and_validation_are_transactional(tmp_path: Path) -> None:
+    repo, _revision, digest = _repo(tmp_path)
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    with pytest.raises(MusterctlError) as conflict:
+        checkout_source(str(repo), "main", "nested", existing, digest)
+    assert conflict.value.code == "destination_exists"
+    with pytest.raises(MusterctlError) as parent:
+        checkout_source(
+            str(repo), "main", "nested", tmp_path / "missing" / "checkout", digest
+        )
+    assert parent.value.code == "parent_missing"
+    advanced = tmp_path / "advanced"
+    with pytest.raises(MusterctlError) as changed:
+        checkout_source(str(repo), "main", "nested", advanced, "f" * 64)
+    assert changed.value.code == "source_checkout_advanced"
+    assert not advanced.exists()
+    escaped = tmp_path / "escaped"
+    with pytest.raises(MusterctlError) as invalid_path:
+        checkout_source(str(repo), "main", "../", escaped)
+    assert invalid_path.value.code == "source_path_invalid"
+    assert not escaped.exists()
+
+
+def test_inspect_requires_a_skill_document(tmp_path: Path) -> None:
+    repo, _revision, _digest = _repo(tmp_path)
+    with pytest.raises(MusterctlError) as error:
+        inspect_source(str(repo), "main", ".")
+    assert error.value.code == "source_skill_missing"

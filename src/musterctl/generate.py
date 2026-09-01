@@ -14,10 +14,10 @@ def render_skill() -> str:
     return f"""---
 name: musterctl
 description: >-
-  Operate a catalog-backed agent development environment: inspect approved
-  skill lineage, reconcile global Agent Skills, and initialize agent-ready
-  projects. Use for environment or bootstrap work; defer ordinary project
-  implementation to that project's own workflow.
+  Operate a source-backed Agent Skill environment: discover installed skills,
+  maintain catalog policy, reconcile global and project copies, improve skills
+  at source, and initialize agent-ready projects. Use for skill lifecycle,
+  environment, or project-bootstrap work.
 metadata:
   short-description: Operate the curated agent environment
 ---
@@ -38,6 +38,26 @@ Follow contextual `next` actions. For exact syntax, use the live interface:
 ```bash
 musterctl <command> --help
 ```
+
+## Route the request
+
+- Existing-machine inventory or migration: `musterctl setup inspect`.
+- Catalog additions, adoption, scope, removal, or upstream updates:
+  `musterctl catalog --help`.
+- Global state and intentional cleanup: `musterctl skills status`,
+  `musterctl skills sync --dry-run`, and `musterctl skills prune --plan`.
+- Cross-project state or rollout: `musterctl projects status` and
+  `musterctl projects sync --plan`.
+- New project: inspect `templates` and `skills available`, then use
+  `musterctl init ... --plan`.
+
+When asked to improve a skill, treat an installed global or project copy as a
+deployment, not its source. Start with `musterctl skills diff <name>` and
+`musterctl skills source <name>`. Checkout or open the source repository, make
+and test the change there, commit and push it, advance the catalog with
+`musterctl catalog update <name> --plan`, then separately reconcile global and
+project copies. Never overwrite detected installed-copy changes unless the user
+explicitly chooses the corresponding `--replace-drift` path.
 
 ## Policies
 

@@ -71,7 +71,7 @@ def test_catalog_rejects_bad_source_and_template_metadata(
     assert "unknown layer missing-layer" in error.value.message
 
 
-def test_catalog_rejects_more_than_five_skills(
+def test_catalog_can_grow_beyond_bootstrap_size(
     catalog: Catalog, tmp_path: Path
 ) -> None:
     text = catalog.path.read_text(encoding="utf-8")
@@ -92,9 +92,8 @@ def test_catalog_rejects_more_than_five_skills(
     )
     path = tmp_path / "too-many.toml"
     path.write_text(text, encoding="utf-8")
-    with pytest.raises(MusterctlError) as error:
-        Catalog.load(path)
-    assert "more than five skills" in error.value.message
+    expanded = Catalog.load(path)
+    assert len(expanded.skills) == 6
 
 
 def test_catalog_wraps_toml_errors(tmp_path: Path) -> None:

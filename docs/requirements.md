@@ -49,6 +49,21 @@ prompt, color-only meaning, animation, or TTY requirement.
 | R-23 | Public package, uv/uvx, and Nix interfaces do not require a source checkout. | packaging/Nix checks |
 | R-24 | `setup inspect` works without a catalog and reconstructs tracked/untracked lineage from existing Skills CLI installs. | setup tests |
 | R-25 | `setup init` imports explicit tracked selections or creates an empty catalog, writes atomically, and never overwrites or modifies installed skills. | setup tests |
+| R-26 | Device inspection discovers canonical global roots and bounded project roots, reports hashes/lineage/catalog status, and identifies same-name content conflicts. | inventory and setup tests |
+| R-27 | No-source installs remain visible but cannot be adopted; recovery points to establishing a dedicated source repository. | setup/adoption tests |
+| R-28 | Catalog add/adopt/remove/configure commands have non-fetching plans, validate the complete resulting catalog, and atomically update only its authoritative file. | catalog store and CLI tests |
+| R-29 | Global-profile membership is explicit catalog policy, independently configurable from whether a skill is available to projects. | catalog configuration tests |
+| R-30 | Global prune requires an explicit apply selection, blocks managed names, removes only global canonical/adaptor paths, and never traverses projects. | state/prune tests |
+| R-31 | A machine-local global lock distinguishes a catalog upgrade from installed-copy edits; edits block replacement by default. | global lock and sync tests |
+| R-32 | Every skill exposes its editable ref and immutable snapshot; source checkout refuses replacement and verifies it has not advanced beyond catalog content. | source tests |
+| R-33 | Catalog update resolves the editable ref, advances commit and digest together, and does not mutate any installed copy. | catalog lifecycle tests |
+| R-34 | Cross-project status compares canonical copies, adapters, project locks, and current catalog snapshots under selected roots. | inventory tests |
+| R-35 | Project sync updates only previously managed entries, never removes a skill, and blocks all selected work when local drift or policy conflicts exist. | project sync tests |
+| R-36 | Each project update stages verified source, advances canonical/adaptor copies and lock metadata, runs `scripts/check`, and rolls that project back on failure. | project sync journey tests |
+| R-37 | Template-required skills are automatic while recommendations remain explicit behind `--defaults`; both remain visible during planning. | project planning tests |
+| R-38 | A template may own a source-controlled skill requirements manifest; apply verifies its required/recommended snapshot against the catalog before publication. | template manifest tests |
+| R-39 | Project locks retain repository URL/path, editable ref, immutable pin, digest, and adapter paths so later rollout does not depend on inference. | project journey tests |
+| R-40 | Generated agent guidance routes skill-improvement requests to source first, then separate catalog, global, and project reconciliation steps. | generation contract tests |
 
 ## Supplied FR-48 through FR-63 mapping
 
@@ -86,7 +101,8 @@ prompt, color-only meaning, animation, or TTY requirement.
 
 - The CLI does not choose a template or skill on behalf of the agent.
 - It does not provide an interactive human wizard.
-- It does not remove unrecognized installed skills.
+- It removes unrecognized global skills only through explicit `skills prune`
+  selection; discovery, setup, sync, and every project operation preserve them.
 - It does not activate global skills merely because the package is installed or
   tested.
 - It owns only its generated discovery skill source; it does not own the catalog,
@@ -94,3 +110,5 @@ prompt, color-only meaning, animation, or TTY requirement.
   them.
 - Setup imports only entries with clear Skills CLI lineage; untracked installs
   remain unmanaged until source metadata is supplied deliberately.
+- It does not create source repositories for anonymous installs. That remains an
+  explicit repository-authoring workflow, typically delegated through `gh-axi`.

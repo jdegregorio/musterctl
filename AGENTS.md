@@ -18,6 +18,7 @@ Skills and creating projects from external pinned sources.
 
 - Product behavior and traceability: `docs/requirements.md`
 - System boundaries and safety model: `docs/architecture.md`
+- End-to-end lifecycle routing: `docs/journeys.md`
 - Current command reference: `docs/commands.md` (generated)
 - Catalog policy: external configuration supplied with `--catalog`,
   `MUSTERCTL_CATALOG`, or `~/.config/musterctl/catalog.toml`
@@ -30,7 +31,8 @@ Skills and creating projects from external pinned sources.
   a catalog, another skill, or template source to this repository, and never
   include skill source in the wheel.
 - Preserve third-party provenance and require immutable pins plus digests.
-- Keep a catalog at five or fewer skills until the owner expands the v1 scope.
+- Keep catalog changes intentional and source-backed; do not impose an arbitrary
+  count limit on external policy.
 - Planning and dry-run paths must not mutate the filesystem, fetch sources, or
   invoke installers.
 - Never put credentials, authenticated state, caches, or machine-specific state
