@@ -6,13 +6,16 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 
 
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
-    wheels = sorted((root / "dist").glob("musterctl-*.whl"))
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    version = project["project"]["version"]
+    wheels = sorted((root / "dist").glob(f"musterctl-{version}-*.whl"))
     if len(wheels) != 1:
         raise SystemExit(f"expected one musterctl wheel, found {len(wheels)}")
     with tempfile.TemporaryDirectory(prefix="musterctl-wheel-") as directory:

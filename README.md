@@ -99,4 +99,5 @@ Repository contents are deliberately narrow:
 - `flake.nix`: pinned-consumer-friendly Nix package interface
 
 Standalone `musterctl` Agent Skill guidance is generated for its own repository
-with `musterctl-build --skill-output SKILL.md`; it is not bundled here.
+with `musterctl-build --skill-only --skill-output SKILL.md`; it is not bundled
+here.
