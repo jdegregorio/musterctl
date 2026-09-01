@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml  # type: ignore[import-untyped]
 
 from musterctl.generate import build, main, render_commands, render_skill
 
@@ -41,7 +42,27 @@ def test_generated_skill_defers_to_live_cli_and_includes_policy() -> None:
     skill = render_skill()
     assert "musterctl <command> --help" in skill
     assert "local catalog is versioned workstation policy" in skill
-    assert "user-invocable: false" in skill
+
+
+def test_generated_skill_uses_supported_frontmatter_and_agent_policy() -> None:
+    skill = render_skill()
+    frontmatter = yaml.safe_load(skill.split("---", 2)[1])
+    assert isinstance(frontmatter, dict)
+    assert set(frontmatter) <= {
+        "name",
+        "description",
+        "license",
+        "allowed-tools",
+        "metadata",
+    }
+
+    root = Path(__file__).resolve().parents[2]
+    agent_metadata = yaml.safe_load(
+        (root / "skills" / "musterctl" / "agents" / "openai.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert agent_metadata["policy"]["allow_implicit_invocation"] is True
 
 
 def test_generated_guidance_uses_the_installed_command() -> None:

@@ -19,7 +19,7 @@
     in {
       default = pkgs.python3Packages.buildPythonApplication {
         pname = "musterctl";
-        version = "0.1.2";
+        version = "0.1.3";
         src = self;
         pyproject = true;
         build-system = [pkgs.python3Packages.hatchling];
