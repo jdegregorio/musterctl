@@ -94,6 +94,19 @@ def materialized_source(
                 EXIT_ENVIRONMENT,
                 {"source_path": source_path, "revision": resolved},
             )
+        symlinks = [
+            path.relative_to(selected).as_posix()
+            for path in selected.rglob("*")
+            if path.is_symlink()
+        ]
+        if symlinks:
+            raise MusterctlError(
+                "source_symlink_unsupported",
+                "Catalog sources may not contain symbolic links.",
+                EXIT_ENVIRONMENT,
+                {"paths": ",".join(symlinks)},
+                ("replace source symlinks with ordinary files or directories",),
+            )
         actual_hash = hash_tree(selected)
         if expected_hash and actual_hash != expected_hash:
             raise MusterctlError(

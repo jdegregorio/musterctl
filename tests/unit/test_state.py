@@ -12,6 +12,7 @@ from musterctl.catalog import Catalog
 from musterctl.errors import EXIT_ENVIRONMENT, MusterctlError
 from musterctl.hashing import hash_tree
 from musterctl.state import (
+    SKILLS_CLI_PACKAGE,
     SkillsManager,
     find_project_root,
     global_skill_states,
@@ -174,7 +175,9 @@ def test_skills_manager_plan_is_pinned_and_noninteractive(
     actions = SkillsManager(catalog, isolated_home).plan()
     assert len(actions) == 3
     action = next(item for item in actions if item.skill.name == "gh-axi")
-    assert action.skill.pin and action.skill.pin in action.command[4]
+    assert action.skill.pin
+    assert action.command[4] == "<verified-source>"
+    assert action.command[2] == SKILLS_CLI_PACKAGE
     assert "--yes" in action.command
     assert "--global" in action.command
     assert action.command.count("--agent") == 2
@@ -184,22 +187,63 @@ def test_skills_manager_applies_and_verifies(
     catalog: Catalog, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = SkillsManager(catalog, isolated_home)
-    observed_stdin: list[object] = []
+    observed_homes: list[str] = []
+
+    def fake_install(
+        command: tuple[str, ...],
+        cwd: Path | None = None,
+        home: Path | None = None,
+    ) -> None:
+        name = command[command.index("--skill") + 1]
+        _install(catalog, isolated_home, name)
+        assert cwd is None
+        assert home is not None
+        observed_homes.append(str(home))
+
+    monkeypatch.setattr(
+        "musterctl.state.SkillsManager.run_install", staticmethod(fake_install)
+    )
+    manager.apply(manager.plan())
+    assert all(state.status in {"current", "unmanaged"} for state in manager.statuses())
+    assert observed_homes and set(observed_homes) == {str(isolated_home)}
+
+
+def test_run_install_is_noninteractive_and_uses_selected_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: dict[str, object] = {}
 
     def fake_run(
         command: tuple[str, ...], **kwargs: object
     ) -> subprocess.CompletedProcess[str]:
-        name = command[command.index("--skill") + 1]
-        _install(catalog, isolated_home, name)
-        observed_stdin.append(kwargs["stdin"])
+        observed.update(kwargs)
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("musterctl.state.subprocess.run", fake_run)
-    manager.apply(manager.plan())
-    assert all(state.status in {"current", "unmanaged"} for state in manager.statuses())
-    assert observed_stdin and all(
-        value is subprocess.DEVNULL for value in observed_stdin
-    )
+    SkillsManager.run_install(("installer",), home=tmp_path)
+    assert observed["stdin"] is subprocess.DEVNULL
+    environment = observed["env"]
+    assert isinstance(environment, dict)
+    assert environment["HOME"] == str(tmp_path)
+
+
+def test_skills_manager_rejects_source_drift_before_install(
+    catalog: Catalog, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = SkillsManager(catalog, isolated_home)
+    skill = catalog.skill("musterctl")
+    catalog.skills["musterctl"] = replace(skill, content_sha256="f" * 64)
+    invoked = False
+
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        nonlocal invoked
+        invoked = True
+
+    monkeypatch.setattr(manager, "run_install", fake_run)
+    with pytest.raises(MusterctlError) as error:
+        manager.install_verified(catalog.skill("musterctl"), global_scope=True)
+    assert error.value.code == "source_digest_mismatch"
+    assert invoked is False
 
 
 def test_skills_manager_failures(
@@ -211,7 +255,7 @@ def test_skills_manager_failures(
         lambda *_args, **_kwargs: subprocess.CompletedProcess((), 9, "", "bad"),
     )
     with pytest.raises(MusterctlError) as failed:
-        manager.apply(manager.plan())
+        manager.run_install(("installer",))
     assert failed.value.code == "skill_sync_failed"
 
     def unavailable(*_args: object, **_kwargs: object) -> None:
@@ -219,12 +263,9 @@ def test_skills_manager_failures(
 
     monkeypatch.setattr("musterctl.state.subprocess.run", unavailable)
     with pytest.raises(MusterctlError) as missing:
-        manager.apply(manager.plan())
+        manager.run_install(("installer",))
     assert missing.value.code == "skills_cli_unavailable"
-    monkeypatch.setattr(
-        "musterctl.state.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess((), 0, "", ""),
-    )
+    monkeypatch.setattr(manager, "install_verified", lambda *_args, **_kwargs: None)
     with pytest.raises(MusterctlError) as incomplete:
         manager.apply(manager.plan())
     assert incomplete.value.code == "skill_sync_incomplete"

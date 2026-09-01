@@ -48,11 +48,13 @@ atomically, never overwrites, and never changes installed skill content.
 ## Global reconciliation
 
 Status compares catalog content digests with canonical and adapter roots.
-`skills sync --dry-run` emits exact
-`npx -y skills add ... --global --copy --yes --agent ...` calls and invokes
-nothing. Apply closes stdin, disables telemetry/color, runs only missing or
-drifted profile entries, and re-inspects. Unmanaged skills are visible but are
-never removed.
+`skills sync --dry-run` shows the pinned installer and source revision and
+invokes nothing. Apply fetches the configured Git revision into an isolated
+checkout, rejects symlinks, verifies the complete source digest, and only then
+runs the pinned `skills@1.5.23` CLI noninteractively against
+`<verified-source>`. It closes stdin, disables telemetry/color, runs only
+missing or drifted profile entries, and re-inspects. Unmanaged skills are
+visible but are never removed.
 
 Third-party sources require a full commit in their installer selector plus a
 SHA-256 content digest. Personal sources may use an explicit latest policy, but
@@ -65,9 +67,10 @@ exclusions, and catalog metadata without fetching. Apply creates a hidden siblin
 directory, fetches every template Git layer at its exact commit, verifies its
 digest, overlays layers, and replaces bounded project tokens.
 
-Selected project skills are installed from their catalog source through the
-ordinary noninteractive Skills CLI. Their materialized hashes are verified and
-recorded in `skills-lock.json`. The transaction initializes Git, runs the
+Selected project skills are fetched and verified before the ordinary
+noninteractive Skills CLI installs the local verified checkout. Their
+materialized hashes are verified again and recorded in `skills-lock.json`. The
+transaction initializes Git, runs the
 template's `scripts/check`, and atomically publishes with no-replace semantics.
 Failure or interruption removes the temporary tree; an existing or concurrently
 appearing destination is never overwritten.

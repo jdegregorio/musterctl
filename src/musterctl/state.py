@@ -15,6 +15,8 @@ from musterctl.hashing import hash_tree
 from musterctl.resources import runtime_home
 from musterctl.sources import materialized_source
 
+SKILLS_CLI_PACKAGE = "skills@1.5.23"
+
 
 @dataclass(frozen=True, slots=True)
 class SkillState:
@@ -244,13 +246,14 @@ class SkillsManager:
         skill: SkillSpec,
         *,
         global_scope: bool = True,
+        source: str | None = None,
     ) -> tuple[str, ...]:
         command = [
             "npx",
             "-y",
-            "skills",
+            SKILLS_CLI_PACKAGE,
             "add",
-            skill.source,
+            source or skill.source,
             "--skill",
             skill.source_skill,
         ]
@@ -261,6 +264,36 @@ class SkillsManager:
             command.extend(("--agent", agent))
         return tuple(command)
 
+    def install_verified(
+        self,
+        skill: SkillSpec,
+        *,
+        global_scope: bool,
+        cwd: Path | None = None,
+    ) -> None:
+        expected_hash = skill.content_sha256
+        if expected_hash is None:  # Catalog validation normally prevents this.
+            raise MusterctlError(
+                "catalog_invalid",
+                f"{skill.name} has no source content digest.",
+                EXIT_ENVIRONMENT,
+            )
+        with materialized_source(
+            skill.source_url,
+            skill.pin or "HEAD",
+            skill.source_path,
+            expected_hash,
+        ) as selected:
+            command = self.install_command(
+                skill,
+                global_scope=global_scope,
+                source=str(selected),
+            )
+            if global_scope:
+                self.run_install(command, cwd=cwd, home=self.home)
+            else:
+                self.run_install(command, cwd=cwd)
+
     def plan(self) -> list[SyncAction]:
         actions: list[SyncAction] = []
         for state in self.statuses():
@@ -268,7 +301,13 @@ class SkillsManager:
                 continue
             skill = self.catalog.skills[state.name]
             operation = "install" if state.status == "missing" else "repair"
-            actions.append(SyncAction(skill, operation, self.install_command(skill)))
+            actions.append(
+                SyncAction(
+                    skill,
+                    operation,
+                    self.install_command(skill, source="<verified-source>"),
+                )
+            )
         return actions
 
     @staticmethod
@@ -310,9 +349,8 @@ class SkillsManager:
             )
 
     def apply(self, actions: list[SyncAction]) -> None:
-        selected_home = self.home if os.environ.get("MUSTERCTL_HOME") else None
         for action in actions:
-            self.run_install(action.command, home=selected_home)
+            self.install_verified(action.skill, global_scope=True)
         remaining = self.plan()
         if remaining:
             raise MusterctlError(

@@ -45,6 +45,18 @@ def test_catalog_rejects_unpinned_third_party(catalog: Catalog, tmp_path: Path) 
     assert "third-party source must be pinned" in error.value.message
 
 
+def test_catalog_requires_every_skill_digest(catalog: Catalog, tmp_path: Path) -> None:
+    text = catalog.path.read_text(encoding="utf-8")
+    digest = catalog.skill("project-helper").content_sha256
+    assert digest is not None
+    text = text.replace(f'content_sha256 = "{digest}"\n', "", 1)
+    path = tmp_path / "missing-digest.toml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(MusterctlError) as error:
+        Catalog.load(path)
+    assert "source needs a content digest" in error.value.message
+
+
 def test_catalog_rejects_bad_source_and_template_metadata(
     catalog: Catalog, tmp_path: Path
 ) -> None:

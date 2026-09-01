@@ -29,7 +29,7 @@ so Home Manager can install a pinned Git revision while managing the catalog at
 `~/.config/musterctl/catalog.toml`.
 
 On first use, inspect skills previously installed by
-[`npx skills`](https://www.skills.sh/docs/cli):
+the pinned [`npx skills`](https://www.skills.sh/docs/cli) CLI release:
 
 ```bash
 musterctl setup inspect
@@ -67,9 +67,11 @@ ownership, update policy, optional immutable commit, and expected content hash.
 Template entries compose independently versioned Git layers. `musterctl` never
 stores or silently substitutes their source.
 
-Third-party skills must be pinned to a full commit and digest. A generated
-project also records exact installed content in `skills-lock.json`. Unmanaged
-global skills are reported and left untouched.
+Every skill has a content digest; third-party skills must also be pinned to a
+full commit. Before mutation, `musterctl` fetches and verifies the source in an
+isolated checkout, then gives that verified local source to the pinned Skills
+CLI. A generated project records exact installed content in `skills-lock.json`.
+Unmanaged global skills are reported and left untouched.
 
 ## Development
 

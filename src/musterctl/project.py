@@ -265,8 +265,7 @@ class ProjectInitializer:
     def _install_skills(self, root: Path, plan: ProjectPlan) -> None:
         manager = SkillsManager(self.catalog)
         for skill in plan.skills:
-            command = manager.install_command(skill, global_scope=False)
-            manager.run_install(command, root)
+            manager.install_verified(skill, global_scope=False, cwd=root)
             installed = root / ".agents" / "skills" / skill.name
             if not installed.is_dir() or not (installed / "SKILL.md").is_file():
                 raise MusterctlError(

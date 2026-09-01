@@ -88,3 +88,37 @@ def test_source_reports_missing_git(
     ):
         pass
     assert error.value.code == "git_unavailable"
+
+
+def test_source_rejects_symlinks(tmp_path: Path) -> None:
+    repo, _revision, _digest = _repo(tmp_path)
+    (repo / "nested" / "alias").symlink_to("value.txt")
+    subprocess.run(("git", "add", "."), cwd=repo, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "add symlink",
+        ),
+        cwd=repo,
+        check=True,
+    )
+    revision = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    with (
+        pytest.raises(MusterctlError) as error,
+        materialized_source(str(repo), revision, "nested", None),
+    ):
+        pass
+    assert error.value.code == "source_symlink_unsupported"

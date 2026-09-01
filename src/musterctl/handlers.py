@@ -361,11 +361,12 @@ def skills_sync(catalog: Catalog, dry_run: bool) -> Document:
                 "skill": action.skill.name,
                 "operation": action.operation,
                 "policy": action.skill.update_policy,
+                "source_revision": action.skill.pin or "HEAD",
                 "command": shlex.join(action.command),
             }
             for action in actions
         ),
-        ("skill", "operation", "policy", "command"),
+        ("skill", "operation", "policy", "source_revision", "command"),
     )
     if dry_run:
         document.scalar("mutations", 0)

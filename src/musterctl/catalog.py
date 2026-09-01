@@ -193,7 +193,9 @@ class Catalog:
                 problems.append(f"{skill.name}: invalid scope")
             if not skill.source or not skill.source_url or not skill.source_path:
                 problems.append(f"{skill.name}: incomplete source lineage")
-            if skill.content_sha256 and not _SHA256.fullmatch(skill.content_sha256):
+            if not skill.content_sha256:
+                problems.append(f"{skill.name}: source needs a content digest")
+            elif not _SHA256.fullmatch(skill.content_sha256):
                 problems.append(f"{skill.name}: invalid content digest")
             if skill.update_policy == "pinned":
                 if not skill.pin or not _SHA.fullmatch(skill.pin):
@@ -203,10 +205,6 @@ class Catalog:
                 elif skill.pin not in skill.source:
                     problems.append(
                         f"{skill.name}: installer source must include its pin"
-                    )
-                if not skill.content_sha256:
-                    problems.append(
-                        f"{skill.name}: pinned source needs a content digest"
                     )
             if skill.ownership == "third-party" and skill.update_policy != "pinned":
                 problems.append(f"{skill.name}: third-party source must be pinned")
